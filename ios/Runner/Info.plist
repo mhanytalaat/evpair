@@ -13,9 +13,15 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>ps_ev</string>
+	<string>evpair</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
+	<key>NSCameraUsageDescription</key>
+	<string>EVPair uses the camera to upload photos of charging stations for hosts.</string>
+	<key>NSLocationWhenInUsageDescription</key>
+	<string>EVPair uses your location to help you find nearby EV charging stations.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>EVPair uses your location to help you find nearby EV charging stations and improve charger discovery.</string>
 	<key>CFBundleShortVersionString</key>
 	<string>$(FLUTTER_BUILD_NAME)</string>
 	<key>CFBundleSignature</key>
