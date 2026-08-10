@@ -1,0 +1,30 @@
+name: ps_ev
+description: EVPair - Peer-to-peer home EV charger rental marketplace.
+publish_to: 'none'
+version: 1.5.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  provider: ^6.1.2             # state management
+  qr_flutter: ^4.1.0           # generate QR codes for booking access
+  mobile_scanner: ^5.1.1       # host scans driver QR code (real camera scanner, Android/iOS)
+  intl: ^0.19.0                # date/time formatting
+  uuid: ^4.4.0                 # unique ids for bookings/transactions
+  geolocator: ^12.0.0          # distance/nearest host matching
+  flutter_map: ^7.0.2          # map view - works on Windows/Web/Android/iOS, no API key needed
+  latlong2: ^0.9.1             # LatLng type used by flutter_map
+  image_picker: ^1.1.2         # upload payment proof screenshot + charger station photo
+  url_launcher: ^6.3.0         # open a charger's Google Maps link externally
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/images/charger_header.png
