@@ -5,6 +5,7 @@ import '../../models/car_profile.dart';
 import '../../theme/ps_ev_theme.dart';
 import '../../theme/ps_ev_app_bar.dart';
 import 'car_setup_screen.dart';
+import '../../models/enums.dart';
 
 /// NEW screen: lists ALL of the driver's cars (previously there was no
 /// way to add a second car - the header icon went straight to a single
