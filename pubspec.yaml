@@ -1,4 +1,4 @@
-name: ps_ev
+name: evpair
 description: EVPair - Peer-to-peer home EV charger rental marketplace.
 publish_to: 'none'
 version: 1.5.0+1
