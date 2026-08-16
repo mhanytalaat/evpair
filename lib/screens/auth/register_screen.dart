@@ -4,11 +4,6 @@ import '../../services/auth_service.dart';
 import '../../theme/ps_ev_theme.dart';
 import '../../theme/ps_ev_app_bar.dart';
 
-/// Pushed screen: registration form (first name, last name, email, phone),
-/// shown when a driver tries to book a charging station or a host tries
-/// to add/manage one, and they are not registered yet. Pops `true` on
-/// success so the caller can continue with the action that triggered
-/// registration.
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
 
@@ -78,16 +73,19 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       const SizedBox(height: 16),
                       PsEvFilledButton(
                         label: 'Register & Continue',
-                        onTap: () {
-                          if (!_formKey.currentState!.validate()) return;
-                          context.read<AuthService>().register(
-                                firstName: _firstNameCtrl.text.trim(),
-                                lastName: _lastNameCtrl.text.trim(),
-                                email: _emailCtrl.text.trim(),
-                                phone: _phoneCtrl.text.trim(),
-                              );
-                          Navigator.pop(context, true);
-                        },
+                      onTap: () async {
+                        if (!_formKey.currentState!.validate()) return;
+                        await context.read<AuthService>().register(
+                              firstName: _firstNameCtrl.text.trim(),
+                              lastName: _lastNameCtrl.text.trim(),
+                              email: _emailCtrl.text.trim(),
+                              phone: _phoneCtrl.text.trim(),
+                            );
+                        if (!context.mounted) return;
+                        Navigator.pop(context, true);
+                      },
+
+
                       ),
                     ],
                   ),
@@ -101,10 +99,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
   }
 }
 
-/// Call this before navigating to a "commit" action (booking a station or
-/// adding/managing a charger). If the user is already registered, resolves
-/// immediately to true. Otherwise pushes RegisterScreen and resolves to
-/// whatever it returns.
 Future<bool> ensureRegistered(BuildContext context) async {
   final auth = context.read<AuthService>();
   if (auth.isRegistered) return true;

@@ -3,14 +3,36 @@ import 'package:uuid/uuid.dart';
 import '../models/booking.dart';
 import '../models/charger_profile.dart';
 import '../models/enums.dart';
-import '../models/availability_slot.dart';
 import 'wallet_service.dart';
 import 'pricing_service.dart';
 
-class ChargerAccessDeniedException implements Exception {
+/// Common base for errors that can occur when a driver tries to request a
+/// booking, so the UI can catch a single type and read `.message`.
+abstract class BookingRequestException implements Exception {
+  String get message;
+}
+
+/// Driver's community doesn't match a residents-only charger's
+/// restriction.
+class ChargerAccessDeniedException implements BookingRequestException {
+  @override
   final String message;
   ChargerAccessDeniedException(this.message);
 }
+
+/// The driver's chosen custom time range is invalid: it doesn't fit
+/// within any of the host's free windows, it overlaps another driver's
+/// existing booking on the same charger, it's shorter than the minimum
+/// allowed duration, or end <= start.
+class TimeRangeUnavailableException implements BookingRequestException {
+  @override
+  final String message;
+  TimeRangeUnavailableException(this.message);
+}
+
+/// Minimum booking duration - prevents drivers from requesting
+/// unrealistically short charging windows (e.g. 2 minutes).
+const int kMinBookingMinutes = 30;
 
 class BookingService extends ChangeNotifier {
   final _uuid = const Uuid();
@@ -24,8 +46,6 @@ class BookingService extends ChangeNotifier {
 
   List<Booking> bookingsForDriver(String driverId) => _bookings.where((b) => b.driverId == driverId).toList();
 
-  /// Driver's bookings that are still "alive": pending approval,
-  /// confirmed (booked, awaiting driver to start), or actively charging.
   List<Booking> ongoingForDriver(String driverId) => _bookings
       .where((b) => b.driverId == driverId && BookingService.ongoingStatuses.contains(b.status))
       .toList();
@@ -33,13 +53,9 @@ class BookingService extends ChangeNotifier {
   List<Booking> pendingApprovalsForHost(String hostId) =>
       _bookings.where((b) => b.hostId == hostId && b.status == BookingStatus.pendingHostApproval).toList();
 
-  /// Bookings for this host that are CONFIRMED (booked, waiting for the
-  /// driver to tap "Start") - NOT yet an active session.
   List<Booking> confirmedForHost(String hostId) =>
       _bookings.where((b) => b.hostId == hostId && b.status == BookingStatus.confirmed).toList();
 
-  /// Bookings for this host where a session is ACTIVELY running (driver
-  /// has tapped Start, charging in progress).
   List<Booking> inProgressForHost(String hostId) =>
       _bookings.where((b) => b.hostId == hostId && b.status == BookingStatus.inProgress).toList();
 
@@ -80,10 +96,35 @@ class BookingService extends ChangeNotifier {
     }
   }
 
+  /// Bookings for a specific charger that are still "live" (would block a
+  /// new overlapping request) - used by `isRangeAvailable` below.
+  List<Booking> _liveBookingsForCharger(String chargerId) =>
+      _bookings.where((b) => b.chargerId == chargerId && ongoingStatuses.contains(b.status)).toList();
+
+  /// Checks whether a CUSTOM time range from `start` up to (but not
+  /// including) `end` can actually be booked on this charger:
+  ///   1. It must fit entirely within at least one of the host's free
+  ///      windows (e.g. a 2:00 PM-4:00 PM request must fit inside a
+  ///      10:00 AM-10:00 PM window).
+  ///   2. It must NOT overlap any other currently-live booking already
+  ///      made on this same charger (by this or any other driver).
+  bool isRangeAvailable(ChargerProfile charger, DateTime start, DateTime end) {
+    final fitsSomeWindow = charger.freeSlots.any((s) => s.canFit(start, end));
+    if (!fitsSomeWindow) return false;
+
+    final overlaps = _liveBookingsForCharger(charger.chargerId).any(
+      (b) => b.requestedStart.isBefore(end) && start.isBefore(b.requestedEnd),
+    );
+    return !overlaps;
+  }
+
+  /// Creates a booking request for a CUSTOM driver-chosen time range
+  /// (which may be a sub-range of a larger host-defined free window).
   Booking createRequest({
     required String driverId,
     required ChargerProfile charger,
-    required AvailabilitySlot slot,
+    required DateTime requestedStart,
+    required DateTime requestedEnd,
     required String? driverCommunity,
   }) {
     if (!charger.isAccessibleToCommunity(driverCommunity)) {
@@ -92,12 +133,24 @@ class BookingService extends ChangeNotifier {
       );
     }
 
-    final minutes = slot.durationMinutes.toDouble();
+    if (!requestedEnd.isAfter(requestedStart)) {
+      throw TimeRangeUnavailableException('End time must be after start time.');
+    }
+    final minutes = requestedEnd.difference(requestedStart).inMinutes;
+    if (minutes < kMinBookingMinutes) {
+      throw TimeRangeUnavailableException('Minimum booking duration is $kMinBookingMinutes minutes.');
+    }
+    if (!isRangeAvailable(charger, requestedStart, requestedEnd)) {
+      throw TimeRangeUnavailableException(
+        'That time range is no longer available - it may be outside the host\'s free window or overlap another booking.',
+      );
+    }
+
     final heldAmount = PricingService.computeCost(
       model: charger.pricingModel,
       price: charger.price,
       powerKw: charger.powerKw,
-      minutes: minutes,
+      minutes: minutes.toDouble(),
     );
 
     final booking = Booking(
@@ -106,18 +159,20 @@ class BookingService extends ChangeNotifier {
       hostId: charger.hostId,
       chargerId: charger.chargerId,
       chargerName: charger.label,
-      requestedStart: slot.start,
-      requestedEnd: slot.end,
+      requestedStart: requestedStart,
+      requestedEnd: requestedEnd,
       pricingModel: charger.pricingModel,
       price: charger.price,
       powerKw: charger.powerKw,
       heldAmount: heldAmount,
+      chargerMapLink: charger.mapLink,
+      chargerLatitude: charger.latitude,
+      chargerLongitude: charger.longitude,
     );
 
     final held = walletService.holdForBooking(driverId: driverId, bookingId: booking.id, amount: heldAmount);
     booking.walletHeld = held;
     booking.evaluateProgress();
-    if (held) slot.isBooked = true;
 
     _bookings.add(booking);
     notifyListeners();
@@ -154,8 +209,6 @@ class BookingService extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// PAUSED FOR NOW: QR-scan-based session start. Kept intact/unused by
-  /// the current UI - see the note on `Booking.validateScan()`.
   bool confirmAccessByQr(String bookingId, String scannedPayload) {
     final booking = findById(bookingId);
     if (booking == null) return false;
@@ -164,10 +217,6 @@ class BookingService extends ChangeNotifier {
     return ok;
   }
 
-  /// NEW: starts the charging session directly (driver taps "Start" on
-  /// BookingStatusScreen) - no QR required. Returns false (and leaves the
-  /// booking unchanged) if the booking isn't confirmed yet, or if it's
-  /// being started too far ahead of the reserved time.
   bool startSession(String bookingId) {
     final booking = findById(bookingId);
     if (booking == null) return false;

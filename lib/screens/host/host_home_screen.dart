@@ -8,15 +8,10 @@ import '../auth/register_screen.dart';
 import 'charger_form_screen.dart';
 import 'manage_charger_screen.dart';
 import 'host_scan_screen.dart';
+import '../../models/enums.dart';
 
-/// Root tab: host's charger list. Each charger card now shows up to three
-/// badges distinguishing: pending requests (awaiting approve/decline),
-/// Booked (confirmed, awaiting driver scan-in), and Charging (session
-/// actively running) - so a host can tell at a glance whether a booking
-/// has actually started or is just reserved.
 class HostHomeScreen extends StatefulWidget {
   const HostHomeScreen({super.key});
-
   @override
   State<HostHomeScreen> createState() => _HostHomeScreenState();
 }
@@ -35,7 +30,6 @@ class _HostHomeScreenState extends State<HostHomeScreen> {
     final bookingService = context.watch<BookingService>();
     final chargers = app.myChargers;
     final activeSessions = bookingService.activeForHost(kCurrentUserId).length;
-
     return Scaffold(
       appBar: PsEvAppBar(
         title: 'Host Home',
@@ -84,7 +78,7 @@ class _HostHomeScreenState extends State<HostHomeScreen> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(ch.label, style: const TextStyle(fontWeight: FontWeight.bold)),
-                              Text('${ch.area} • ${ch.powerKw} kW • ${ch.ampere}A • ${ch.connector.name} • ${ch.priceLabel}', style: const TextStyle(color: PsEvColors.mutedText, fontSize: 12)),
+                              Text('${ch.city} • ${ch.area} • ${ch.powerKw} kW • ${ch.ampere}A • ${ch.connector.label} • ${ch.priceLabel}', style: const TextStyle(color: PsEvColors.mutedText, fontSize: 12)),
                               if (ch.residentsOnly)
                                 Padding(padding: const EdgeInsets.only(top: 4), child: PsEvTag.restricted(label: '${ch.restrictedCommunity} only')),
                               Wrap(
@@ -137,8 +131,8 @@ class _HostHomeScreenState extends State<HostHomeScreen> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text('Scan Driver QR / Active Sessions', style: TextStyle(fontWeight: FontWeight.bold)),
-                          Text('$activeSessions awaiting scan or in progress', style: const TextStyle(color: PsEvColors.mutedText, fontSize: 12)),
+                          const Text('Active Sessions', style: TextStyle(fontWeight: FontWeight.bold)),
+                          Text('$activeSessions awaiting start or in progress', style: const TextStyle(color: PsEvColors.mutedText, fontSize: 12)),
                         ],
                       ),
                     ),

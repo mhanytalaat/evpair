@@ -5,12 +5,6 @@ import '../driver/driver_home_screen.dart';
 import '../host/host_home_screen.dart';
 import '../admin/admin_home_screen.dart';
 
-/// Top-level app shell: a STANDARD Flutter bottom-navigation layout with
-/// 3 tabs (Driver / Host / Admin). Navigating deeper uses Navigator.push,
-/// so pushed screens automatically get a working back arrow/gesture.
-///
-/// NOTE: the Admin tab is demo-only. In production, remove it entirely and
-/// ship admin tooling as its own separate, authenticated app.
 class AppRoot extends StatelessWidget {
   const AppRoot({super.key});
 

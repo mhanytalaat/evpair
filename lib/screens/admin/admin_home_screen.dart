@@ -6,10 +6,6 @@ import '../../models/enums.dart';
 import '../../theme/ps_ev_theme.dart';
 import '../../theme/ps_ev_app_bar.dart';
 
-/// Root tab: admin panel with Top-Ups / Bookings sub-tabs.
-///
-/// !! ACCESS CONTROL !! This must NEVER be reachable from a regular
-/// driver/host's navigation in production.
 class AdminHomeScreen extends StatefulWidget {
   const AdminHomeScreen({super.key});
 

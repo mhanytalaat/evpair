@@ -7,6 +7,10 @@ class Booking {
   final String hostId;
   final String chargerId;
   final String chargerName;
+
+  /// The driver's CUSTOM requested time range - can be any sub-range
+  /// within a host's free window (e.g. a host window of 10:00 AM-10:00 PM
+  /// lets a driver request just 2:00 PM-4:00 PM).
   final DateTime requestedStart;
   final DateTime requestedEnd;
 
@@ -16,16 +20,15 @@ class Booking {
 
   final double heldAmount;
 
+  final String? chargerMapLink;
+  final double chargerLatitude;
+  final double chargerLongitude;
+
   BookingStatus status;
 
   bool walletHeld;
   bool hostApproved;
 
-  /// QR-related fields are KEPT (not removed) since QR-based access may be
-  /// re-enabled later - see the "stopped for now" note on
-  /// `validateScan()` below. The current driver-facing flow does NOT use
-  /// these; it uses `startSession()` instead (a simple Start button, no
-  /// QR required).
   String? qrCodePayload;
   DateTime? qrScannedAt;
 
@@ -47,6 +50,9 @@ class Booking {
     required this.price,
     required this.powerKw,
     required this.heldAmount,
+    required this.chargerLatitude,
+    required this.chargerLongitude,
+    this.chargerMapLink,
     this.status = BookingStatus.pendingWalletHold,
     this.walletHeld = false,
     this.hostApproved = false,
@@ -59,6 +65,13 @@ class Booking {
   });
 
   Duration get reservedDuration => requestedEnd.difference(requestedStart);
+
+  String get googleMapsUrl {
+    if (chargerMapLink != null && chargerMapLink!.trim().isNotEmpty) {
+      return chargerMapLink!;
+    }
+    return 'https://www.google.com/maps/search/?api=1&query=$chargerLatitude,$chargerLongitude';
+  }
 
   void evaluateProgress() {
     if (status == BookingStatus.declinedByHost ||
@@ -77,9 +90,6 @@ class Booking {
     }
     if (status == BookingStatus.pendingHostApproval && walletHeld && hostApproved) {
       status = BookingStatus.confirmed;
-      // QR payload is still generated internally (kept for a possible
-      // future re-enable), even though the current UI doesn't display or
-      // require it.
       qrCodePayload ??= _generateQrPayload();
     }
   }
@@ -89,10 +99,9 @@ class Booking {
         'start=${requestedStart.toIso8601String()}|end=${requestedEnd.toIso8601String()}';
   }
 
-  /// PAUSED FOR NOW: QR-code-based access confirmation (host scans the
-  /// driver's QR to start the session). Kept intact and unused by the
-  /// current UI in case QR scanning is re-enabled later - use
-  /// `startSession()` below for the current "Start" button flow instead.
+  /// PAUSED FOR NOW: QR-code-based access confirmation. Kept intact for a
+  /// possible future re-enable - use `startSession()` for the current
+  /// "Start" button flow instead.
   bool validateScan(String scannedPayload, DateTime now) {
     if (status != BookingStatus.confirmed) return false;
     if (scannedPayload != qrCodePayload) return false;
@@ -107,13 +116,6 @@ class Booking {
     return true;
   }
 
-  /// NEW: starts the charging session directly from a driver-tapped
-  /// "Start" button - no QR scan required. Still requires the booking to
-  /// be `confirmed` (wallet held + host approved), and still applies a
-  /// light time-window guard (can't start more than 15 minutes before the
-  /// reserved start time) to avoid a driver starting a booking way ahead
-  /// of schedule, but otherwise has NO upper time bound since the driver
-  /// may legitimately arrive later than planned.
   bool startSession(DateTime now) {
     if (status != BookingStatus.confirmed) return false;
     final earliestStart = requestedStart.subtract(const Duration(minutes: 15));

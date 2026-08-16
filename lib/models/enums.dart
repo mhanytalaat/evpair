@@ -22,14 +22,12 @@ enum PaymentMethod {
   other,
 }
 
-/// Physical connector shapes. NOTE: `gbtAc` and `gbtDc` exist because
-/// China's GB/T standard uses its own distinct connector shapes (GB/T
-/// 20234.2 for AC, GB/T 20234.3 for DC) that are physically incompatible
-/// with Type 2 / CCS2, even though they can look superficially similar.
-/// `type2` and `ccs` (CCS2/Combo) only ever belong to the European/
-/// International standard - they can NEVER be paired with the Chinese
-/// GB/T standard. See `ChargingStandardLabel.compatibleConnectors` below,
-/// which enforces this at the UI level via a cascading dropdown.
+/// Physical connector shapes. `gbtAc` and `gbtDc` exist because China's
+/// GB/T standard uses its own distinct connector shapes (GB/T 20234.2 for
+/// AC, GB/T 20234.3 for DC) that are physically incompatible with Type 2 /
+/// CCS2, even though they can look superficially similar. `type2` and
+/// `ccs` (CCS2/Combo) only ever belong to the European/International
+/// standard - they can NEVER be paired with the Chinese GB/T standard.
 enum ConnectorType { type1, type2, ccs, chademo, gbtAc, gbtDc }
 
 extension ConnectorTypeLabel on ConnectorType {
@@ -55,9 +53,7 @@ enum UserRole {
 }
 
 /// Broad EV charging ECOSYSTEM/STANDARD - distinct from the physical
-/// `ConnectorType` above, but the two are NOT independent: only certain
-/// connector shapes are physically possible under each standard (see
-/// `compatibleConnectors` below). A car and a charger must share the SAME
+/// `ConnectorType` above. A car and a charger must share the SAME
 /// ChargingStandard (and therefore a connector from the same bucket) to
 /// actually be usable together.
 enum ChargingStandard { chineseGbT, europeanCcs2 }
@@ -73,11 +69,6 @@ extension ChargingStandardLabel on ChargingStandard {
         ChargingStandard.europeanCcs2 => 'CCS2/Type2',
       };
 
-  /// The ONLY physical connector types that are valid under this charging
-  /// standard. Drives a cascading Charging Standard -> Connector Type
-  /// dropdown (mirroring the Brand -> Model cascade for cars) so it is
-  /// impossible to select a nonsensical combination like "Type 2" with
-  /// "Chinese (GB/T)".
   List<ConnectorType> get compatibleConnectors => switch (this) {
         ChargingStandard.chineseGbT => const [ConnectorType.gbtAc, ConnectorType.gbtDc],
         ChargingStandard.europeanCcs2 => const [ConnectorType.type2, ConnectorType.ccs, ConnectorType.chademo, ConnectorType.type1],
@@ -98,8 +89,6 @@ extension WeekdayLabel on Weekday {
         Weekday.saturday => 'Sat',
       };
 
-  /// Dart's DateTime.weekday is 1=Monday..7=Sunday. This maps our enum to
-  /// that numbering for date arithmetic.
   int get dartWeekday => switch (this) {
         Weekday.monday => DateTime.monday,
         Weekday.tuesday => DateTime.tuesday,

@@ -23,10 +23,6 @@ class MatchingService {
     final matches = <ChargerMatch>[];
     for (final charger in allChargers) {
       if (!car.isCompatibleWithAmpere(charger.ampere, charger.connector)) continue;
-      // NEW: also require the charging STANDARD (Chinese GB/T vs European
-      // CCS2/Type 2) to match - a car and charger can otherwise "look"
-      // compatible on ampere/connector but be physically unusable
-      // together (e.g. an Arcfox T1 on GB/T vs a European CCS2 station).
       if (!car.isCompatibleStandard(charger.chargingStandard)) continue;
       if (!charger.isAccessibleToCommunity(car.community)) continue;
       final slot = charger.findFittingSlot(requestedStart, requestedEnd);

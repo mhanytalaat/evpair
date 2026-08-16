@@ -10,12 +10,6 @@ import '../../theme/ps_ev_theme.dart';
 import '../../theme/ps_ev_app_bar.dart';
 import 'booking_status_screen.dart';
 
-/// NEW: driver-facing screen listing ALL of the current driver's ongoing
-/// bookings - both ones still "booked" (pending approval or confirmed,
-/// waiting to be scanned in) and ones actively "charging" (in progress) -
-/// each with a clear status pill and key info (charger, time, cost/held
-/// amount, live duration if charging). Reached from Driver Home via a
-/// header icon.
 class MyBookingsScreen extends StatefulWidget {
   const MyBookingsScreen({super.key});
 

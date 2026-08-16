@@ -58,9 +58,6 @@ class WalletService extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Directly credits a balance without going through the top-up approval
-  /// flow. Used ONLY for seeding demo data at app startup (see main.dart) -
-  /// never expose this as a user-facing "just add money" shortcut.
   void seedBalance(String userId, double amount) {
     _balances[userId] = balanceOf(userId) + amount;
     _ledger.add(WalletLedgerEntry(id: _uuid.v4(), userId: userId, amount: amount, reason: 'Starting demo balance'));

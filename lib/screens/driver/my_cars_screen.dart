@@ -7,19 +7,8 @@ import '../../theme/ps_ev_app_bar.dart';
 import 'car_setup_screen.dart';
 import '../../models/enums.dart';
 
-/// NEW screen: lists ALL of the driver's cars (previously there was no
-/// way to add a second car - the header icon went straight to a single
-/// car's edit form). Mirrors the same "+ Add Another" list pattern already
-/// used for a host's multiple chargers (see host/host_home_screen.dart).
-///
-/// Each car shows its brand/model/specs and whether it's the currently
-/// "active" car (the one used for map compatibility checks and new
-/// bookings - see AppState.car). Tapping a car opens it for editing;
-/// tapping "Set Active" switches which car is active without navigating
-/// away.
 class MyCarsScreen extends StatefulWidget {
   const MyCarsScreen({super.key});
-
   @override
   State<MyCarsScreen> createState() => _MyCarsScreenState();
 }
@@ -39,7 +28,6 @@ class _MyCarsScreenState extends State<MyCarsScreen> {
   Widget build(BuildContext context) {
     final app = context.watch<AppState>();
     final cars = app.cars;
-
     return Scaffold(
       appBar: const PsEvAppBar(title: 'My Cars'),
       body: ListView(

@@ -10,23 +10,20 @@ class ChargerProfile {
   double powerKw;
   double ampere;
   ConnectorType connector;
+
+  String city;
   String area;
 
-  /// NEW: Chinese (GB/T) vs European (CCS2/Type 2) charging standard for
-  /// this station. Hosts pick this explicitly on the Add/Edit Charger
-  /// form since two chargers can look similar but be wired for
-  /// completely different regional standards.
   ChargingStandard chargingStandard;
 
   PricingModel pricingModel;
   double price;
 
-  /// Raw image bytes for the station photo, read via
-  /// `XFile.readAsBytes()` and rendered with `Image.memory` - works
-  /// identically on Web, Windows, Android, and iOS (unlike storing a file
-  /// path and using `Image.file`).
   Uint8List? photoBytes;
 
+  /// Host-provided Google Maps link. When present, this is the source of
+  /// TRUTH for map placement (parsed for exact coordinates) - it takes
+  /// priority over the City/Area-based fallback.
   String? mapLink;
 
   double latitude;
@@ -44,6 +41,7 @@ class ChargerProfile {
     required this.powerKw,
     required this.ampere,
     required this.connector,
+    required this.city,
     required this.area,
     required this.chargingStandard,
     required this.pricingModel,
@@ -57,7 +55,7 @@ class ChargerProfile {
     List<AvailabilitySlot>? freeSlots,
   }) : freeSlots = freeSlots ?? [];
 
-  bool get hasAnyFreeSlot => freeSlots.any((s) => !s.isBooked);
+  bool get hasAnyFreeSlot => freeSlots.isNotEmpty;
 
   bool isAccessibleToCommunity(String? driverCommunity) {
     if (!residentsOnly) return true;
@@ -65,6 +63,9 @@ class ChargerProfile {
     return driverCommunity == restrictedCommunity;
   }
 
+  /// Finds a host-defined window that fully contains [reqStart]-[reqEnd].
+  /// Does NOT check for overlaps with other bookings within that window -
+  /// see BookingService.isRangeAvailable() for the full check.
   AvailabilitySlot? findFittingSlot(DateTime reqStart, DateTime reqEnd) {
     final candidates = freeSlots.where((s) => s.canFit(reqStart, reqEnd)).toList()
       ..sort((a, b) => a.start.compareTo(b.start));

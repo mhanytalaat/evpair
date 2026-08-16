@@ -2,6 +2,12 @@
   "configVersion": 2,
   "packages": [
     {
+      "name": "_flutterfire_internals",
+      "rootUri": "file:///C:/Users/mhany/AppData/Local/Pub/Cache/hosted/pub.dev/_flutterfire_internals-1.3.76",
+      "packageUri": "lib/",
+      "languageVersion": "3.6"
+    },
+    {
       "name": "async",
       "rootUri": "file:///C:/Users/mhany/AppData/Local/Pub/Cache/hosted/pub.dev/async-2.13.1",
       "packageUri": "lib/",
@@ -24,6 +30,24 @@
       "rootUri": "file:///C:/Users/mhany/AppData/Local/Pub/Cache/hosted/pub.dev/clock-1.1.2",
       "packageUri": "lib/",
       "languageVersion": "3.4"
+    },
+    {
+      "name": "cloud_firestore",
+      "rootUri": "file:///C:/Users/mhany/AppData/Local/Pub/Cache/hosted/pub.dev/cloud_firestore-6.8.0",
+      "packageUri": "lib/",
+      "languageVersion": "3.6"
+    },
+    {
+      "name": "cloud_firestore_platform_interface",
+      "rootUri": "file:///C:/Users/mhany/AppData/Local/Pub/Cache/hosted/pub.dev/cloud_firestore_platform_interface-8.0.6",
+      "packageUri": "lib/",
+      "languageVersion": "3.6"
+    },
+    {
+      "name": "cloud_firestore_web",
+      "rootUri": "file:///C:/Users/mhany/AppData/Local/Pub/Cache/hosted/pub.dev/cloud_firestore_web-5.7.2",
+      "packageUri": "lib/",
+      "languageVersion": "3.6"
     },
     {
       "name": "collection",
@@ -78,6 +102,24 @@
       "rootUri": "file:///C:/Users/mhany/AppData/Local/Pub/Cache/hosted/pub.dev/file_selector_windows-0.9.3+5",
       "packageUri": "lib/",
       "languageVersion": "3.8"
+    },
+    {
+      "name": "firebase_core",
+      "rootUri": "file:///C:/Users/mhany/AppData/Local/Pub/Cache/hosted/pub.dev/firebase_core-4.13.0",
+      "packageUri": "lib/",
+      "languageVersion": "3.6"
+    },
+    {
+      "name": "firebase_core_platform_interface",
+      "rootUri": "file:///C:/Users/mhany/AppData/Local/Pub/Cache/hosted/pub.dev/firebase_core_platform_interface-8.1.0",
+      "packageUri": "lib/",
+      "languageVersion": "3.6"
+    },
+    {
+      "name": "firebase_core_web",
+      "rootUri": "file:///C:/Users/mhany/AppData/Local/Pub/Cache/hosted/pub.dev/firebase_core_web-3.10.0",
+      "packageUri": "lib/",
+      "languageVersion": "3.6"
     },
     {
       "name": "fixnum",

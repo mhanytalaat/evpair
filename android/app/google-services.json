@@ -1,0 +1,67 @@
+{
+  "project_info": {
+    "project_number": "193701990892",
+    "project_id": "evpair-83a96",
+    "storage_bucket": "evpair-83a96.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:193701990892:android:598ca992aebce34e6d70c9",
+        "android_client_info": {
+          "package_name": "com.evpair.evpair"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDEgGoFVxVKhy51TPblOltb304Z-kLLu_M"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:193701990892:android:b6ecad5d0287e9106d70c9",
+        "android_client_info": {
+          "package_name": "com.evpairapp.evpair"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDEgGoFVxVKhy51TPblOltb304Z-kLLu_M"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:193701990892:android:82af4edab6f0222e6d70c9",
+        "android_client_info": {
+          "package_name": "com.example.evpair"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDEgGoFVxVKhy51TPblOltb304Z-kLLu_M"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

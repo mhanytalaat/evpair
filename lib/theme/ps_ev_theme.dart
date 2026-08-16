@@ -105,8 +105,6 @@ ThemeData buildPsEvTheme() {
   );
 }
 
-/// A small pill-shaped tag widget matching `.tag` / `.tag.price` /
-/// `.tag.restricted` in the HTML demo.
 class PsEvTag extends StatelessWidget {
   final String label;
   final Color background;
@@ -136,8 +134,6 @@ class PsEvTag extends StatelessWidget {
   }
 }
 
-/// A status pill matching `.pill.free` / `.pill.booked` / `.pill.locked` /
-/// `.pill.status-*` in the HTML demo.
 class PsEvStatusPill extends StatelessWidget {
   final String label;
   final Color background;
@@ -148,15 +144,8 @@ class PsEvStatusPill extends StatelessWidget {
   factory PsEvStatusPill.free() => const PsEvStatusPill(label: 'Free', background: PsEvColors.emeraldChip, textColor: PsEvColors.emeraldChipText);
   factory PsEvStatusPill.booked() => const PsEvStatusPill(label: 'Full', background: PsEvColors.amberChip, textColor: PsEvColors.amberChipText);
   factory PsEvStatusPill.locked() => const PsEvStatusPill(label: 'Residents only', background: PsEvColors.redChip, textColor: PsEvColors.redChipText);
-
-  /// Host-side: booking confirmed, driver has NOT yet tapped Start.
-  /// RENAMED from "Booked · awaiting scan" now that the QR-scan step is
-  /// paused - the driver starts the session themselves via a button, they
-  /// don't get scanned in.
   factory PsEvStatusPill.bookedAwaitingScan() =>
       const PsEvStatusPill(label: 'Booked · awaiting start', background: PsEvColors.amberChip, textColor: PsEvColors.amberChipText);
-
-  /// Host-side: session actively running (driver tapped Start).
   factory PsEvStatusPill.charging() =>
       const PsEvStatusPill(label: 'Charging · running', background: PsEvColors.blueChip, textColor: PsEvColors.blueChipText);
 
@@ -170,7 +159,6 @@ class PsEvStatusPill extends StatelessWidget {
   }
 }
 
-/// A soft, emerald-tinted outline button used for secondary "add" actions.
 class PsEvSoftButton extends StatelessWidget {
   final IconData icon;
   final String label;
@@ -213,15 +201,6 @@ class PsEvSoftButton extends StatelessWidget {
   }
 }
 
-/// THE unified "primary action" button style: solid background, white
-/// bold text, rounded - matching the look of the active "One-time"
-/// segmented-control tab. Used for: Pick date / Pick start time / Pick
-/// end time, Save Charger, Submit Top-Up Request, Start/Stop Charging
-/// Session, and any other primary call-to-action.
-///
-/// NEW: `color` parameter (defaults to emerald) so call sites like the
-/// "Stop Charging Session" button can use a distinct red without needing
-/// a whole separate widget.
 class PsEvFilledButton extends StatelessWidget {
   final IconData? icon;
   final String label;

@@ -7,9 +7,6 @@ class PriceLimits {
   const PriceLimits({required this.min, required this.max, required this.unitLabel});
 }
 
-/// Centralizes pricing logic: realistic min/max limits per pricing model,
-/// cost computation for per-minute and per-kWh billing, and human-readable
-/// "equivalent rate" hints for the charger form.
 class PricingService {
   static const Map<PricingModel, PriceLimits> limits = {
     PricingModel.perMinute: PriceLimits(min: 0.5, max: 5, unitLabel: 'EGP/min'),
@@ -25,7 +22,6 @@ class PricingService {
 
   static double minutesPerKwh(double powerKw) => powerKw > 0 ? 60 / powerKw : 0;
 
-  /// Raw (unrounded) cost computation.
   static double computeCostRaw({
     required PricingModel model,
     required double price,
@@ -40,14 +36,8 @@ class PricingService {
   }
 
   /// Rounded-to-whole-EGP cost. ALWAYS use this (not computeCostRaw) when
-  /// the result will be: (a) shown to the user, (b) held from/compared
-  /// against a wallet balance, or (c) stored on a Booking. Using a
-  /// consistent rounded value everywhere prevents a subtle bug where a
-  /// displayed total (e.g. "150 EGP", rounded for display) differs by a
-  /// tiny fraction from the raw floating-point total actually used in a
-  /// `balance >= total` comparison - which could make a driver see
-  /// "insufficient balance" even though their balance covers the displayed
-  /// amount exactly. Rounding once, centrally, eliminates that mismatch.
+  /// the result will be displayed, held from/compared against a wallet
+  /// balance, or stored on a Booking.
   static double computeCost({
     required PricingModel model,
     required double price,

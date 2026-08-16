@@ -6,10 +6,6 @@ import '../../models/enums.dart';
 import '../../theme/ps_ev_theme.dart';
 import '../../theme/ps_ev_app_bar.dart';
 
-/// Add/Edit form for a SINGLE car. Reached from MyCarsScreen - either with
-/// `existing == null` (add a new car to the driver's list) or with an
-/// existing car to edit in place. This is the same Add/Edit-in-one-form
-/// pattern already used for chargers (see host/charger_form_screen.dart).
 class CarSetupScreen extends StatefulWidget {
   final CarProfile? existing;
   const CarSetupScreen({super.key, this.existing});
@@ -23,12 +19,9 @@ class _CarSetupScreenState extends State<CarSetupScreen> {
   late double _ampere;
   late String _community;
 
-  // Cascading Brand -> Model selection.
   late String _brand;
   late String _model;
 
-  // Charging standard is set FIRST; Connector Type cascades from it (only
-  // connectors valid for the chosen standard are selectable).
   late ChargingStandard _chargingStandard;
   late ConnectorType _connector;
 
@@ -103,8 +96,7 @@ class _CarSetupScreenState extends State<CarSetupScreen> {
                     padding: EdgeInsets.only(top: 6, bottom: 12),
                     child: Text(
                       'Chinese-market/imported EVs (e.g. Arcfox, many BYD imports) use GB/T. '
-                      'European-market EVs (e.g. VW, most Geely-for-Europe models) use CCS2/Type 2. '
-                      'These are physically different, incompatible connector families.',
+                      'European-market EVs (e.g. VW, most Geely-for-Europe models) use CCS2/Type 2.',
                       style: TextStyle(fontSize: 11, color: PsEvColors.mutedText),
                     ),
                   ),
@@ -149,10 +141,6 @@ class _CarSetupScreenState extends State<CarSetupScreen> {
                     label: isEditing ? 'Save Changes' : 'Save Car',
                     onTap: () {
                       final car = CarProfile(
-                        // Reuse the same carId when editing so this
-                        // updates the existing car in place rather than
-                        // creating a duplicate; generate a fresh id (based
-                        // on creation time) only when adding a new one.
                         carId: widget.existing?.carId ?? 'car_${DateTime.now().millisecondsSinceEpoch}',
                         driverId: kCurrentUserId,
                         brand: _brand,

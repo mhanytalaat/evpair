@@ -7,6 +7,8 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../state/app_state.dart';
 import '../../models/charger_profile.dart';
 import '../../models/enums.dart';
+import '../../services/wallet_service.dart';
+import '../../services/booking_service.dart';
 import '../../theme/ps_ev_theme.dart';
 import '../../theme/ps_ev_app_bar.dart';
 import '../auth/register_screen.dart';
@@ -16,21 +18,12 @@ import 'booking_status_screen.dart';
 import 'booking_request_screen.dart';
 import 'my_bookings_screen.dart';
 
-/// Distinguishes WHY a charger may or may not be usable by the current
-/// driver, so the UI can show a clear, specific reason rather than a
-/// single generic "not compatible" state.
 enum _ChargerAccessState { standardMismatch, residentsOnlyLocked, full, available }
 
-/// Root tab: driver's landing screen. Uses `flutter_map` (OpenStreetMap
-/// tiles) - works on Windows desktop, Chrome, and Edge with NO API key
-/// required.
-///
-/// UPDATED:
-///   - "Wrong standard" renamed to "Different Type" throughout (pill,
-///     legend, banner) per feedback that the previous wording was unclear.
-///   - The Car Profile header icon now opens the new MyCarsScreen (a list
-///     of ALL the driver's cars) instead of jumping straight to a single
-///     car's edit form - this is what makes adding a SECOND car possible.
+/// Root tab: driver's landing screen. Each host free window (e.g. 10:00
+/// AM - 10:00 PM) is shown as a range with a "Choose Time" button;
+/// tapping it opens BookingRequestScreen where the driver picks any
+/// custom start/end time within that window.
 class DriverHomeScreen extends StatefulWidget {
   const DriverHomeScreen({super.key});
 
@@ -40,6 +33,13 @@ class DriverHomeScreen extends StatefulWidget {
 
 class _DriverHomeScreenState extends State<DriverHomeScreen> {
   String? _selectedChargerId;
+  final ScrollController _scrollController = ScrollController();
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
 
   _ChargerAccessState _accessStateFor(ChargerProfile ch, dynamic driverCar) {
     if (driverCar != null && !driverCar.isCompatibleStandard(ch.chargingStandard)) {
@@ -77,7 +77,7 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
     }
   }
 
-  Future<void> _onRequestTap(BuildContext context, ChargerProfile charger, dynamic slot) async {
+  Future<void> _onChooseTimeTap(BuildContext context, ChargerProfile charger, dynamic slot) async {
     final ok = await ensureRegistered(context);
     if (!ok || !context.mounted) return;
     Navigator.push(context, MaterialPageRoute(builder: (_) => BookingRequestScreen(charger: charger, slot: slot)));
@@ -86,7 +86,12 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
   @override
   Widget build(BuildContext context) {
     final app = context.watch<AppState>();
+    final wallet = context.watch<WalletService>();
+    final bookingService = context.watch<BookingService>();
     final chargers = app.chargers;
+    final walletBalance = wallet.balanceOf(kCurrentUserId);
+    final activeBooking = app.lastDriverBookingId == null ? null : bookingService.findById(app.lastDriverBookingId!);
+
     final selected = chargers.firstWhere(
       (c) => c.chargerId == (_selectedChargerId ?? chargers.first.chargerId),
       orElse: () => chargers.first,
@@ -97,8 +102,9 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
     final residentsLocked = selectedState == _ChargerAccessState.residentsOnlyLocked;
     final bookable = selectedState == _ChargerAccessState.available || selectedState == _ChargerAccessState.full;
 
-    final freeSlots = selected.freeSlots.where((s) => !s.isBooked).toList();
-    final dateFmt = DateFormat('EEE, MMM d • h:mm a');
+    final freeSlots = selected.freeSlots;
+    final dateFmt = DateFormat('EEE, MMM d');
+    final timeFmt = DateFormat('h:mm a');
 
     final avgLat = chargers.map((c) => c.latitude).reduce((a, b) => a + b) / chargers.length;
     final avgLng = chargers.map((c) => c.longitude).reduce((a, b) => a + b) / chargers.length;
@@ -119,8 +125,6 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
             tooltip: 'Wallet',
             onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const WalletScreen())),
           ),
-          // UPDATED: now opens the multi-car list screen instead of a
-          // single car's edit form directly.
           PsEvHeaderAction(
             icon: Icons.electric_car,
             tooltip: 'My Cars',
@@ -137,6 +141,7 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
         ],
       ),
       body: ListView(
+        controller: _scrollController,
         padding: const EdgeInsets.all(16),
         children: [
           Card(
@@ -238,7 +243,7 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(ch.label, style: TextStyle(fontWeight: FontWeight.bold, color: isSelected ? PsEvColors.emerald : Colors.black87)),
-                                Text('${ch.area} • ${ch.chargingStandard.shortLabel}', style: const TextStyle(fontSize: 11, color: PsEvColors.mutedText)),
+                                Text('${ch.city} • ${ch.area} • ${ch.chargingStandard.shortLabel}', style: const TextStyle(fontSize: 11, color: PsEvColors.mutedText)),
                               ],
                             ),
                           ),
@@ -281,7 +286,7 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(selected.label, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
-                            Text(selected.area, style: const TextStyle(color: PsEvColors.mutedText, fontSize: 12)),
+                            Text('${selected.city} • ${selected.area}', style: const TextStyle(color: PsEvColors.mutedText, fontSize: 12)),
                             Wrap(
                               children: [
                                 PsEvTag(label: '${selected.powerKw} kW'),
@@ -375,11 +380,15 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
 
                   if (bookable) ...[
                     const SizedBox(height: 12),
-                    const Text('Free slots', style: TextStyle(fontWeight: FontWeight.bold)),
+                    const Text('Host Free Windows', style: TextStyle(fontWeight: FontWeight.bold)),
+                    const Padding(
+                      padding: EdgeInsets.only(top: 2, bottom: 4),
+                      child: Text('Tap "Choose Time" to pick any custom range within a window.', style: TextStyle(fontSize: 11, color: PsEvColors.mutedText)),
+                    ),
                     if (freeSlots.isEmpty)
                       const Padding(
                         padding: EdgeInsets.only(top: 8),
-                        child: Text('No free slots right now for this charger.', style: TextStyle(color: PsEvColors.mutedText)),
+                        child: Text('No free windows right now for this charger.', style: TextStyle(color: PsEvColors.mutedText)),
                       )
                     else
                       ...freeSlots.map((s) => Padding(
@@ -391,7 +400,8 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
                                   child: Column(
                                     crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
-                                      Text('${dateFmt.format(s.start)} – ${DateFormat('h:mm a').format(s.end)}', style: const TextStyle(fontSize: 13)),
+                                      Text(dateFmt.format(s.start), style: const TextStyle(fontSize: 12, color: PsEvColors.mutedText)),
+                                      Text('${timeFmt.format(s.start)} – ${timeFmt.format(s.end)}', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
                                       if (s.recurrenceLabel != null)
                                         Text(s.recurrenceLabel!, style: const TextStyle(fontSize: 10, color: PsEvColors.emerald)),
                                     ],
@@ -399,8 +409,8 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
                                 ),
                                 ElevatedButton(
                                   style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8)),
-                                  onPressed: () => _onRequestTap(context, selected, s),
-                                  child: const Text('Request', style: TextStyle(fontSize: 12)),
+                                  onPressed: () => _onChooseTimeTap(context, selected, s),
+                                  child: const Text('Choose Time', style: TextStyle(fontSize: 12)),
                                 ),
                               ],
                             ),
@@ -410,7 +420,108 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
               ),
             ),
           ),
+
+          _buildDashboardSection(
+            context: context,
+            walletBalance: walletBalance,
+            carLabel: app.car?.carModel ?? 'No car added yet',
+            carDetails: app.car == null
+                ? 'Add a car to check charger compatibility'
+                : '${app.car!.chargingStandard.shortLabel} • ${app.car!.connector.label} • ${app.car!.maxAmpere.toStringAsFixed(0)}A',
+            bookingText: activeBooking == null ? 'No active booking' : activeBooking.status.name,
+          ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildDashboardSection({
+    required BuildContext context,
+    required double walletBalance,
+    required String carLabel,
+    required String carDetails,
+    required String bookingText,
+  }) {
+    final app = context.read<AppState>();
+    return Column(
+      children: [
+        _dashboardCard(
+          icon: '💰',
+          title: 'My Wallet',
+          subtitle: '${walletBalance.toStringAsFixed(0)} EGP',
+          buttonText: 'Top Up (InstaPay / Vodafone Cash)',
+          onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const WalletScreen())),
+        ),
+        _dashboardCard(
+          icon: '🚗',
+          title: 'My Car Profile',
+          subtitle: '$carLabel • $carDetails',
+          onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const MyCarsScreen())),
+        ),
+        _dashboardCard(
+          icon: '🔍',
+          title: 'Find a Compatible Charger',
+          subtitle: 'Filtered by ampere, connector, distance & availability',
+          onTap: () => _scrollController.animateTo(0, duration: const Duration(milliseconds: 350), curve: Curves.easeOut),
+        ),
+        _dashboardCard(
+          icon: '📋',
+          title: 'My Booking Status',
+          subtitle: bookingText,
+          onTap: () {
+            if (app.lastDriverBookingId == null) return;
+            Navigator.push(context, MaterialPageRoute(builder: (_) => BookingStatusScreen(bookingId: app.lastDriverBookingId!)));
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _dashboardCard({
+    required String icon,
+    required String title,
+    required String subtitle,
+    String? buttonText,
+    VoidCallback? onTap,
+  }) {
+    return Card(
+      child: InkWell(
+        borderRadius: BorderRadius.circular(PsEvRadii.card),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 50,
+                    height: 50,
+                    alignment: Alignment.center,
+                    decoration: const BoxDecoration(color: PsEvColors.emeraldPale, shape: BoxShape.circle),
+                    child: Text(icon, style: const TextStyle(fontSize: 23)),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(title, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: Colors.black)),
+                        const SizedBox(height: 4),
+                        Text(subtitle, style: const TextStyle(fontSize: 13, color: PsEvColors.mutedText)),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              if (buttonText != null) ...[
+                const SizedBox(height: 16),
+                PsEvFilledButton(label: buttonText, onTap: onTap),
+              ],
+            ],
+          ),
+        ),
       ),
     );
   }

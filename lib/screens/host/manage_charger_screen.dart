@@ -12,13 +12,10 @@ import '../../theme/ps_ev_theme.dart';
 import '../../theme/ps_ev_app_bar.dart';
 import 'charger_form_screen.dart';
 
-/// Pushed screen: manage a single charger's availability slots, its
-/// pending booking requests, and (NEW) a clear "Active Bookings" section
-/// that separates:
-///   - Booked (confirmed, waiting for the driver to arrive/scan in)
-///   - Charging (session actively running)
-/// so the host can tell at a glance which sessions have actually started
-/// vs. which are just reserved.
+/// Pushed screen: manage a single charger's FREE WINDOWS, its pending
+/// booking requests, and an "Active Bookings" section (Booked vs
+/// Charging). Since drivers can now book CUSTOM sub-ranges within a free
+/// window, each window shows how many bookings currently fall within it.
 class ManageChargerScreen extends StatefulWidget {
   final ChargerProfile charger;
   const ManageChargerScreen({super.key, required this.charger});
@@ -190,6 +187,11 @@ class _ManageChargerScreenState extends State<ManageChargerScreen> {
     final confirmed = bookingService.confirmedForHost(ch.hostId).where((b) => b.chargerId == ch.chargerId).toList();
     final inProgress = bookingService.inProgressForHost(ch.hostId).where((b) => b.chargerId == ch.chargerId).toList();
 
+    int bookingsWithinWindow(AvailabilitySlot s) => bookingService
+        .filterByCategory('ongoing')
+        .where((b) => b.chargerId == ch.chargerId && !b.requestedStart.isBefore(s.start) && !b.requestedEnd.isAfter(s.end))
+        .length;
+
     return Scaffold(
       appBar: PsEvAppBar(title: ch.label),
       body: ListView(
@@ -208,7 +210,7 @@ class _ManageChargerScreenState extends State<ManageChargerScreen> {
                     ),
                   const SizedBox(height: 10),
                   Text(ch.label, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
-                  Text('${ch.area} • ${ch.powerKw} kW • ${ch.ampere}A • ${ch.connector.name} • ${ch.priceLabel}', style: const TextStyle(color: PsEvColors.mutedText, fontSize: 12)),
+                  Text('${ch.city} • ${ch.area} • ${ch.powerKw} kW • ${ch.ampere}A • ${ch.connector.label} • ${ch.priceLabel}', style: const TextStyle(color: PsEvColors.mutedText, fontSize: 12)),
                   if (ch.residentsOnly)
                     Padding(padding: const EdgeInsets.only(top: 6), child: PsEvTag.restricted(label: '${ch.restrictedCommunity} residents only')),
                   if (ch.mapLink != null)
@@ -236,7 +238,6 @@ class _ManageChargerScreenState extends State<ManageChargerScreen> {
             ),
           ),
 
-          // ---- NEW: Active Bookings (Booked vs Charging) ----
           if (confirmed.isNotEmpty || inProgress.isNotEmpty) ...[
             const Text('Active Bookings', style: TextStyle(fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
@@ -251,7 +252,7 @@ class _ManageChargerScreenState extends State<ManageChargerScreen> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text('Driver: ${b.driverId}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                              Text(dateFmt.format(b.requestedStart), style: const TextStyle(color: PsEvColors.mutedText, fontSize: 11)),
+                              Text('${dateFmt.format(b.requestedStart)} – ${DateFormat('h:mm a').format(b.requestedEnd)}', style: const TextStyle(color: PsEvColors.mutedText, fontSize: 11)),
                             ],
                           ),
                         ),
@@ -290,8 +291,11 @@ class _ManageChargerScreenState extends State<ManageChargerScreen> {
             const SizedBox(height: 8),
           ],
 
-          const Text('Free Charging Availability', style: TextStyle(fontWeight: FontWeight.bold)),
-          const SizedBox(height: 8),
+          const Text('Free Charging Windows', style: TextStyle(fontWeight: FontWeight.bold)),
+          const Padding(
+            padding: EdgeInsets.only(top: 2, bottom: 6),
+            child: Text('Drivers can book any custom time range within each window below.', style: TextStyle(fontSize: 11, color: PsEvColors.mutedText)),
+          ),
           Card(
             child: Padding(
               padding: const EdgeInsets.all(12),
@@ -300,32 +304,36 @@ class _ManageChargerScreenState extends State<ManageChargerScreen> {
                   if (slots.isEmpty)
                     const Padding(
                       padding: EdgeInsets.symmetric(vertical: 8),
-                      child: Text('No slots added yet.', style: TextStyle(color: PsEvColors.mutedText)),
+                      child: Text('No windows added yet.', style: TextStyle(color: PsEvColors.mutedText)),
                     )
                   else
-                    ...slots.map((s) => Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 6),
-                          child: Row(
-                            children: [
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text('${dateFmt.format(s.start)} – ${DateFormat('h:mm a').format(s.end)}', style: const TextStyle(fontSize: 13)),
-                                    if (s.recurrenceLabel != null)
-                                      Text(s.recurrenceLabel!, style: const TextStyle(fontSize: 10, color: PsEvColors.emerald)),
-                                  ],
-                                ),
+                    ...slots.map((s) {
+                      final count = bookingsWithinWindow(s);
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 6),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text('${dateFmt.format(s.start)} – ${DateFormat('h:mm a').format(s.end)}', style: const TextStyle(fontSize: 13)),
+                                  if (s.recurrenceLabel != null)
+                                    Text(s.recurrenceLabel!, style: const TextStyle(fontSize: 10, color: PsEvColors.emerald)),
+                                ],
                               ),
-                              s.isBooked ? PsEvStatusPill.booked() : PsEvStatusPill.free(),
-                              if (!s.isBooked)
-                                IconButton(
-                                  icon: const Icon(Icons.delete_outline, size: 18, color: PsEvColors.red),
-                                  onPressed: () => setState(() => ch.freeSlots.remove(s)),
-                                ),
-                            ],
-                          ),
-                        )),
+                            ),
+                            count > 0
+                                ? PsEvStatusPill(label: '$count booking${count > 1 ? 's' : ''}', background: PsEvColors.emeraldChip, textColor: PsEvColors.emeraldChipText)
+                                : PsEvStatusPill.free(),
+                            IconButton(
+                              icon: const Icon(Icons.delete_outline, size: 18, color: PsEvColors.red),
+                              onPressed: () => setState(() => ch.freeSlots.remove(s)),
+                            ),
+                          ],
+                        ),
+                      );
+                    }),
                   if (_showAddSlotForm)
                     Container(
                       margin: const EdgeInsets.only(top: 8),
@@ -382,7 +390,7 @@ class _ManageChargerScreenState extends State<ManageChargerScreen> {
                               const SizedBox(width: 8),
                               Expanded(
                                 child: PsEvFilledButton(
-                                  label: _repeatWeekly ? 'Add Recurring Slots' : 'Add Slot',
+                                  label: _repeatWeekly ? 'Add Recurring Windows' : 'Add Window',
                                   onTap: _repeatWeekly ? _addRecurringSlots : _addOneTimeSlot,
                                 ),
                               ),
@@ -394,7 +402,7 @@ class _ManageChargerScreenState extends State<ManageChargerScreen> {
                   else
                     Padding(
                       padding: const EdgeInsets.only(top: 8),
-                      child: PsEvSoftButton(icon: Icons.add, label: '+ Add free slot', onTap: () => setState(() => _showAddSlotForm = true)),
+                      child: PsEvSoftButton(icon: Icons.add, label: '+ Add free window', onTap: () => setState(() => _showAddSlotForm = true)),
                     ),
                 ],
               ),
@@ -417,7 +425,7 @@ class _ManageChargerScreenState extends State<ManageChargerScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text('Driver: ${b.driverId}', style: const TextStyle(fontWeight: FontWeight.bold)),
-                        Text(dateFmt.format(b.requestedStart), style: const TextStyle(color: PsEvColors.mutedText, fontSize: 12)),
+                        Text('${dateFmt.format(b.requestedStart)} – ${DateFormat('h:mm a').format(b.requestedEnd)}', style: const TextStyle(color: PsEvColors.mutedText, fontSize: 12)),
                         Text('Held: ${b.heldAmount.toStringAsFixed(0)} EGP ✓', style: const TextStyle(fontSize: 12, color: PsEvColors.emerald)),
                         const SizedBox(height: 8),
                         Row(

@@ -6,21 +6,6 @@ import '../../state/app_state.dart';
 import '../../theme/ps_ev_theme.dart';
 import '../../theme/ps_ev_app_bar.dart';
 
-/// UPDATED: QR scanning is PAUSED FOR NOW. The driver now starts/stops
-/// their own session via buttons on their side (see
-/// driver/booking_status_screen.dart) - the host no longer needs to scan
-/// anything. This screen is now a read-only monitor showing:
-///   - "Booked · awaiting start" bookings (confirmed, driver hasn't
-///     tapped Start yet)
-///   - "Charging · running" bookings, each with a LIVE duration counter
-///     using the exact same `sessionStartedAt` timestamp and formatting
-///     as the driver's own timer, so both sides always agree on elapsed
-///     time.
-///
-/// The host is NOTIFIED the moment a driver starts a session: this screen
-/// (and the Host Home badge counts) update live via Provider, and if the
-/// host is already viewing this screen when a session starts, a SnackBar
-/// announcement appears too.
 class HostScanScreen extends StatefulWidget {
   const HostScanScreen({super.key});
 
@@ -30,11 +15,6 @@ class HostScanScreen extends StatefulWidget {
 
 class _HostScanScreenState extends State<HostScanScreen> {
   Timer? _timer;
-
-  /// Tracks which booking ids we've already shown a "started" SnackBar
-  /// for, so we announce each transition to Charging exactly once (not on
-  /// every 1-second timer tick) and never for sessions that were ALREADY
-  /// running before this screen was opened.
   final Set<String> _announcedInProgressIds = {};
   bool _seededInitialSessions = false;
 
@@ -62,12 +42,6 @@ class _HostScanScreenState extends State<HostScanScreen> {
     final confirmed = bookingService.confirmedForHost(kCurrentUserId);
     final inProgress = bookingService.inProgressForHost(kCurrentUserId);
 
-    // Notify the host with a SnackBar the moment a NEW session starts
-    // while they're on this screen. The very first build only SEEDS the
-    // set of already-known in-progress ids (no SnackBar) - so a session
-    // that was already running before the host opened this screen does
-    // NOT trigger a "just started" announcement; only a genuinely new
-    // transition to Charging (detected on a later rebuild) does.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       if (!_seededInitialSessions) {
@@ -157,10 +131,6 @@ class _HostScanScreenState extends State<HostScanScreen> {
                             padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
                             decoration: BoxDecoration(color: PsEvColors.blueChip, borderRadius: BorderRadius.circular(14)),
                             child: Text(
-                              // Same formula and formatting as the
-                              // driver's own timer on BookingStatusScreen,
-                              // so both sides always show the identical
-                              // elapsed time.
                               _formatElapsed(DateTime.now().difference(b.sessionStartedAt!)),
                               style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: PsEvColors.blueChipText),
                             ),

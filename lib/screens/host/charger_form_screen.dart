@@ -9,11 +9,6 @@ import '../../services/pricing_service.dart';
 import '../../theme/ps_ev_theme.dart';
 import '../../theme/ps_ev_app_bar.dart';
 
-/// Attempts to extract a "lat,lng" pair from a Google Maps link, e.g.
-/// "https://maps.google.com/?q=30.0131,31.4326" or
-/// "https://www.google.com/maps/@30.0131,31.4326,15z". Returns null if no
-/// coordinate pattern is found, in which case the caller falls back to
-/// the area-based lookup (with jitter) in kAreaCoordinates.
 ({double lat, double lng})? tryParseLatLngFromMapLink(String? link) {
   if (link == null || link.trim().isEmpty) return null;
   final match = RegExp(r'(-?\d{1,3}\.\d+)\s*,\s*(-?\d{1,3}\.\d+)').firstMatch(link);
@@ -25,7 +20,6 @@ import '../../theme/ps_ev_app_bar.dart';
   return (lat: lat, lng: lng);
 }
 
-/// Pushed screen: shared Add/Edit Charger form.
 class ChargerFormScreen extends StatefulWidget {
   final ChargerProfile? existing;
   const ChargerFormScreen({super.key, this.existing});
@@ -38,6 +32,7 @@ class _ChargerFormScreenState extends State<ChargerFormScreen> {
   late TextEditingController _nameCtrl;
   late TextEditingController _mapLinkCtrl;
   late TextEditingController _priceCtrl;
+  late String _city;
   late String _area;
   late double _power;
   late double _ampere;
@@ -53,10 +48,6 @@ class _ChargerFormScreenState extends State<ChargerFormScreen> {
 
   bool get isEditing => widget.existing != null;
 
-  // Generated once (in initState) so the SAME id is used both for the
-  // jitter seed and, if this is a new charger, as its final chargerId -
-  // meaning the jitter position stays stable across rebuilds while the
-  // form is open, rather than shifting on every keystroke.
   late final String _pendingChargerId;
 
   @override
@@ -68,7 +59,11 @@ class _ChargerFormScreenState extends State<ChargerFormScreen> {
     _nameCtrl = TextEditingController(text: e?.label ?? 'My Home Charger');
     _mapLinkCtrl = TextEditingController(text: e?.mapLink ?? '');
     _priceCtrl = TextEditingController(text: e?.price.toString() ?? '');
-    _area = e?.area ?? kAreaOptions.first;
+
+    _city = e?.city ?? kCityOptions.first;
+    final initialAreas = kCityAreaOptions[_city] ?? const ['Other'];
+    _area = (e != null && initialAreas.contains(e.area)) ? e.area : initialAreas.first;
+
     _power = e?.powerKw ?? kPowerOptions[3];
     _ampere = e?.ampere ?? kAmpereOptions[1];
     _pricingModel = e?.pricingModel ?? PricingModel.perMinute;
@@ -111,19 +106,6 @@ class _ChargerFormScreenState extends State<ChargerFormScreen> {
     });
   }
 
-  /// Resolves the final lat/lng for this charger:
-  ///   1. If the Google Maps link contains parseable coordinates, use
-  ///      those EXACTLY - this is the precise, "within the district"
-  ///      pinpoint a host can provide.
-  ///   2. Otherwise, look up the selected Area's center in
-  ///      kAreaCoordinates and apply a small deterministic jitter (keyed
-  ///      on this charger's id) so it doesn't land on the EXACT same spot
-  ///      as every other charger that also falls back to the same area -
-  ///      instead it appears at a distinct, nearby point within that
-  ///      district, which is what "showing correctly but around the area,
-  ///      not exact" was asking for.
-  ///   3. Otherwise, fall back to the existing charger's coordinates (when
-  ///      editing) or Cairo center (when adding new).
   ({double lat, double lng}) _resolveCoordinates() {
     final fromLink = tryParseLatLngFromMapLink(_mapLinkCtrl.text);
     if (fromLink != null) return fromLink;
@@ -168,6 +150,7 @@ class _ChargerFormScreenState extends State<ChargerFormScreen> {
     if (isEditing) {
       final ch = widget.existing!;
       ch.label = _nameCtrl.text.trim();
+      ch.city = _city;
       ch.area = _area;
       ch.mapLink = _mapLinkCtrl.text.trim().isEmpty ? null : _mapLinkCtrl.text.trim();
       ch.connector = _connector;
@@ -190,6 +173,7 @@ class _ChargerFormScreenState extends State<ChargerFormScreen> {
         powerKw: _power,
         ampere: _ampere,
         connector: _connector,
+        city: _city,
         area: _area,
         chargingStandard: _chargingStandard,
         pricingModel: _pricingModel,
@@ -211,6 +195,7 @@ class _ChargerFormScreenState extends State<ChargerFormScreen> {
     final limits = PricingService.limitsFor(_pricingModel);
     final hint = PricingService.hintText(_pricingModel, _power, double.tryParse(_priceCtrl.text) ?? 0);
     final connectorsForStandard = _chargingStandard.compatibleConnectors;
+    final areasForCity = kCityAreaOptions[_city] ?? const ['Other'];
 
     return Scaffold(
       appBar: PsEvAppBar(title: isEditing ? 'Edit Charger' : 'Add Charger'),
@@ -254,19 +239,32 @@ class _ChargerFormScreenState extends State<ChargerFormScreen> {
                   TextField(controller: _nameCtrl),
                   const SizedBox(height: 12),
 
+                  const Text('City', style: TextStyle(fontSize: 12, color: PsEvColors.mutedText)),
+                  const SizedBox(height: 4),
+                  DropdownButtonFormField<String>(
+                    value: _city,
+                    items: kCityOptions.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
+                    onChanged: (v) => setState(() {
+                      _city = v!;
+                      final nextAreas = kCityAreaOptions[_city] ?? const ['Other'];
+                      _area = nextAreas.first;
+                    }),
+                  ),
+                  const SizedBox(height: 12),
+
                   const Text('Location / Area', style: TextStyle(fontSize: 12, color: PsEvColors.mutedText)),
                   const SizedBox(height: 4),
                   DropdownButtonFormField<String>(
                     value: _area,
-                    items: kAreaOptions.map((a) => DropdownMenuItem(value: a, child: Text(a))).toList(),
+                    items: areasForCity.map((a) => DropdownMenuItem(value: a, child: Text(a))).toList(),
                     onChanged: (v) => setState(() => _area = v!),
                   ),
                   const Padding(
                     padding: EdgeInsets.only(top: 4, bottom: 8),
                     child: Text(
-                      'Without an exact Google Maps link, your charger will be placed at a nearby point within '
-                      'this district (not stacked on top of other chargers). For a precise pin at your exact '
-                      'address, paste a Google Maps link with coordinates below.',
+                      'City and Area are used for filtering/search. Without an exact Google Maps link, your '
+                      'charger will be placed near the Area\'s center (spread out from other chargers in the '
+                      'same area). For a precise pin at your exact address, paste a Google Maps link below.',
                       style: TextStyle(fontSize: 11, color: PsEvColors.mutedText),
                     ),
                   ),

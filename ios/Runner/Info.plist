@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Ps Ev</string>
+	<string>EVPair</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -13,12 +13,12 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>evpair</string>
+	<string>EVPair</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>NSCameraUsageDescription</key>
 	<string>EVPair uses the camera to upload photos of charging stations for hosts.</string>
-	<key>NSLocationWhenInUsageDescription</key>
+	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>EVPair uses your location to help you find nearby EV charging stations.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 	<string>EVPair uses your location to help you find nearby EV charging stations and improve charger discovery.</string>
