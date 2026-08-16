@@ -2,11 +2,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import '../models/car_profile.dart';
 import '../models/charger_profile.dart';
-import '../models/enums.dart';
 
 enum AppRole { driver, host, admin }
-
-const String kCurrentUserId = 'mohamed_hany';
 
 const List<String> kCommunityOptions = [
   'Rehab City - Group 1',
@@ -99,12 +96,17 @@ class AppState extends ChangeNotifier {
 
   final FirebaseFirestore _db;
 
-  /// True while cars/chargers are being loaded from Firestore on startup.
-  /// The root/driver/host screens can use this to show a brief loading
-  /// state instead of a flash of empty data.
+  /// True while cars/chargers are being loaded from Firestore.
   bool isHydrating = true;
 
   AppRole role = AppRole.driver;
+
+  /// The Firebase Auth uid of the currently signed-in user, or null for a
+  /// guest. Car ownership (`cars.driverId`) and charger ownership
+  /// (`chargers.hostId`) are both keyed to this id - see
+  /// setCurrentUserAndHydrate/clearCurrentUserAndData, called from the
+  /// Register/Sign In/Sign Out flows in AuthService's callers.
+  String? currentUserId;
 
   final List<CarProfile> cars = [];
   String? activeCarId;
@@ -121,110 +123,67 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  final List<ChargerProfile> chargers = [
-    ChargerProfile(
-      hostId: kCurrentUserId,
-      chargerId: 'host_mohamed_villa',
-      label: 'Villa Home Charger',
-      powerKw: 22,
-      ampere: 32,
-      connector: ConnectorType.type2,
-      city: 'Cairo',
-      area: 'New Cairo',
-      chargingStandard: ChargingStandard.europeanCcs2,
-      pricingModel: PricingModel.perMinute,
-      price: 2.5,
-      latitude: kAreaCoordinates['New Cairo']!.lat + jitterOffsetFor('host_mohamed_villa').lat,
-      longitude: kAreaCoordinates['New Cairo']!.lng + jitterOffsetFor('host_mohamed_villa').lng,
-      mapLink: 'https://maps.google.com/?q=30.0131,31.4326',
-    ),
-    ChargerProfile(
-      hostId: kCurrentUserId,
-      chargerId: 'host_mohamed_garden',
-      label: 'Garden Fast Charger',
-      powerKw: 11,
-      ampere: 16,
-      connector: ConnectorType.type2,
-      city: 'Cairo',
-      area: 'New Cairo',
-      chargingStandard: ChargingStandard.europeanCcs2,
-      pricingModel: PricingModel.perKwh,
-      price: 3.0,
-      latitude: kAreaCoordinates['New Cairo']!.lat + jitterOffsetFor('host_mohamed_garden').lat,
-      longitude: kAreaCoordinates['New Cairo']!.lng + jitterOffsetFor('host_mohamed_garden').lng,
-    ),
-    ChargerProfile(
-      hostId: 'host_mona',
-      chargerId: 'host_mona_garage',
-      label: 'Garage Wallbox',
-      powerKw: 11,
-      ampere: 16,
-      connector: ConnectorType.type2,
-      city: 'Cairo',
-      area: 'Maadi',
-      chargingStandard: ChargingStandard.europeanCcs2,
-      pricingModel: PricingModel.perMinute,
-      price: 1.6,
-      latitude: kAreaCoordinates['Maadi']!.lat + jitterOffsetFor('host_mona_garage').lat,
-      longitude: kAreaCoordinates['Maadi']!.lng + jitterOffsetFor('host_mona_garage').lng,
-    ),
-    ChargerProfile(
-      hostId: 'host_youssef',
-      chargerId: 'host_youssef_compound',
-      label: 'Compound Charger',
-      powerKw: 7.4,
-      ampere: 32,
-      connector: ConnectorType.gbtDc,
-      city: 'Cairo',
-      area: 'Rehab City',
-      chargingStandard: ChargingStandard.chineseGbT,
-      pricingModel: PricingModel.perMinute,
-      price: 1.2,
-      latitude: kAreaCoordinates['Rehab City']!.lat + jitterOffsetFor('host_youssef_compound').lat,
-      longitude: kAreaCoordinates['Rehab City']!.lng + jitterOffsetFor('host_youssef_compound').lng,
-      residentsOnly: true,
-      restrictedCommunity: 'Rehab City - Group 1',
-    ),
-  ];
+  /// ALL chargers in the marketplace (every host), loaded from Firestore.
+  /// There is no bundled demo/seed data - this starts empty and only ever
+  /// contains chargers that hosts have actually added via
+  /// ChargerFormScreen.
+  final List<ChargerProfile> chargers = [];
 
-  List<ChargerProfile> get myChargers => chargers.where((c) => c.hostId == kCurrentUserId).toList();
+  List<ChargerProfile> get myChargers =>
+      currentUserId == null ? const [] : chargers.where((c) => c.hostId == currentUserId).toList();
 
   void setRole(AppRole r) {
     role = r;
     notifyListeners();
   }
 
-  /// Loads this user's cars and chargers from Firestore, called once on
-  /// app start (see main.dart). Cars are loaded fresh from the `cars`
-  /// collection. For chargers: if Firestore already has documents for
-  /// this host (e.g. from a previous session), those replace the
-  /// in-memory seed chargers below; otherwise the seed chargers are
-  /// pushed to Firestore once so nothing is lost going forward.
+  /// Loads marketplace chargers (every host - drivers need to see all of
+  /// them to browse/book) and, if signed in, this user's own cars from
+  /// Firestore. Called on app start and again whenever the signed-in user
+  /// changes (see setCurrentUserAndHydrate/clearCurrentUserAndData).
   Future<void> hydrateFromFirestore() async {
     isHydrating = true;
     notifyListeners();
 
     try {
-      final carsSnapshot = await _db.collection('cars').where('driverId', isEqualTo: kCurrentUserId).get();
-      cars
+      final chargersSnapshot = await _db.collection('chargers').get();
+      chargers
         ..clear()
-        ..addAll(carsSnapshot.docs.map((d) => CarProfile.fromFirestore(d.data())));
-      activeCarId = cars.isEmpty ? null : cars.first.carId;
+        ..addAll(chargersSnapshot.docs.map((d) => ChargerProfile.fromFirestore(d.data())));
 
-      final chargersSnapshot = await _db.collection('chargers').where('hostId', isEqualTo: kCurrentUserId).get();
-      if (chargersSnapshot.docs.isNotEmpty) {
-        chargers.removeWhere((c) => c.hostId == kCurrentUserId);
-        chargers.addAll(chargersSnapshot.docs.map((d) => ChargerProfile.fromFirestore(d.data())));
+      if (currentUserId != null) {
+        final carsSnapshot = await _db.collection('cars').where('driverId', isEqualTo: currentUserId).get();
+        cars
+          ..clear()
+          ..addAll(carsSnapshot.docs.map((d) => CarProfile.fromFirestore(d.data())));
+        activeCarId = cars.isEmpty ? null : cars.first.carId;
       } else {
-        for (final seed in chargers.where((c) => c.hostId == kCurrentUserId).toList()) {
-          await _db.collection('chargers').doc(seed.chargerId).set(seed.toFirestore(), SetOptions(merge: true));
-        }
+        cars.clear();
+        activeCarId = null;
       }
     } catch (e) {
       debugPrint('AppState.hydrateFromFirestore failed: $e');
     }
 
     isHydrating = false;
+    notifyListeners();
+  }
+
+  /// Call right after a successful register()/signIn() so this user's own
+  /// cars (and their view of the marketplace) load correctly.
+  Future<void> setCurrentUserAndHydrate(String userId) async {
+    currentUserId = userId;
+    await hydrateFromFirestore();
+  }
+
+  /// Call right after signOut(). Clears private data (cars) and resets out
+  /// of the Host/Admin tabs; the charger marketplace list is left as-is
+  /// since browsing chargers doesn't require an account.
+  Future<void> clearCurrentUserAndData() async {
+    currentUserId = null;
+    cars.clear();
+    activeCarId = null;
+    role = AppRole.driver;
     notifyListeners();
   }
 
@@ -264,8 +223,7 @@ class AppState extends ChangeNotifier {
 
   /// Persists in-place edits made to an existing ChargerProfile (see
   /// ChargerFormScreen, which mutates the object's fields directly rather
-  /// than constructing a new instance). Call this after mutating a
-  /// charger so listeners are notified and Firestore stays in sync.
+  /// than constructing a new instance).
   void updateCharger(ChargerProfile updated) {
     notifyListeners();
     _db.collection('chargers').doc(updated.chargerId).set(updated.toFirestore(), SetOptions(merge: true));

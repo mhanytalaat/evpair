@@ -168,7 +168,7 @@ class _ChargerFormScreenState extends State<ChargerFormScreen> {
       Navigator.pop(context, true);
     } else {
       final charger = ChargerProfile(
-        hostId: kCurrentUserId,
+        hostId: app.currentUserId ?? '',
         chargerId: _pendingChargerId,
         label: _nameCtrl.text.trim(),
         powerKw: _power,

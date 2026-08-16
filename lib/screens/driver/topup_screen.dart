@@ -23,6 +23,7 @@ class _TopUpScreenState extends State<TopUpScreen> {
   @override
   Widget build(BuildContext context) {
     final wallet = context.read<WalletService>();
+    final currentUserId = context.read<AppState>().currentUserId ?? '';
 
     return Scaffold(
       appBar: const PsEvAppBar(title: 'Top Up Wallet'),
@@ -70,7 +71,7 @@ class _TopUpScreenState extends State<TopUpScreen> {
                     label: 'Submit Top-Up Request',
                     onTap: () {
                       wallet.submitTopUp(
-                        driverId: kCurrentUserId,
+                        driverId: currentUserId,
                         amount: double.tryParse(_amountCtrl.text) ?? widget.suggestedAmount,
                         method: _method,
                         referenceNote: _refCtrl.text.trim().isEmpty ? 'N/A' : _refCtrl.text.trim(),

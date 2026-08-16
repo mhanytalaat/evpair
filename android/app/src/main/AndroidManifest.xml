@@ -1,4 +1,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Required for Firestore/Firebase Auth network calls and for loading
+         the OpenStreetMap tiles shown on the Driver map. Without this,
+         the map can render as an empty grey box on some Android builds. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <application
         android:label="evpair"
         android:name="${applicationName}"

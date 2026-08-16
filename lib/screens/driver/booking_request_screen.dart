@@ -82,7 +82,7 @@ class _BookingRequestScreenState extends State<BookingRequestScreen> {
     final total = rangeValid
         ? PricingService.computeCost(model: charger.pricingModel, price: charger.price, powerKw: charger.powerKw, minutes: minutes.toDouble())
         : 0.0;
-    final balance = wallet.balanceOf(kCurrentUserId);
+    final balance = wallet.balanceOf(app.currentUserId ?? '');
     final canAfford = balance >= total;
 
     final dateFmt = DateFormat('EEE, MMM d');
@@ -197,7 +197,7 @@ class _BookingRequestScreenState extends State<BookingRequestScreen> {
                             }
                             try {
                               final booking = bookingService.createRequest(
-                                driverId: kCurrentUserId,
+                                driverId: app.currentUserId ?? '',
                                 charger: charger,
                                 requestedStart: range.start,
                                 requestedEnd: range.end,

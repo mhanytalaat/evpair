@@ -166,7 +166,7 @@ class _ManageChargerScreenState extends State<ManageChargerScreen> {
     if (!ok || !context.mounted) return;
     // ChargerFormScreen persists the edit (via AppState.updateCharger) on
     // save, so we just need to rebuild this screen with the updated data.
-    await Navigator.push<bool>(context, MaterialPageRoute(builder: (_) => ChargerFormScreen(existing: widget.charger)));
+    await Navigator.push(context, MaterialPageRoute(builder: (_) => ChargerFormScreen(existing: widget.charger)));
     setState(() {});
   }
 

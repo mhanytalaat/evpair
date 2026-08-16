@@ -18,6 +18,8 @@
 	<string>APPL</string>
 	<key>NSCameraUsageDescription</key>
 	<string>EVPair uses the camera to upload photos of charging stations for hosts.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>EVPair needs access to your photo library so hosts can upload a photo of their charging station.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>EVPair uses your location to help you find nearby EV charging stations.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>

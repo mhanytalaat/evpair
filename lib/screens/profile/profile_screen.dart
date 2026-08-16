@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../services/auth_service.dart';
+import '../../state/app_state.dart';
 import '../../theme/ps_ev_theme.dart';
 import '../root/app_root.dart';
 
@@ -16,7 +17,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
   final _formKey = GlobalKey<FormState>();
   late final TextEditingController _firstNameCtrl;
   late final TextEditingController _lastNameCtrl;
-  late final TextEditingController _emailCtrl;
   late final TextEditingController _phoneCtrl;
   bool _saving = false;
 
@@ -26,7 +26,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final auth = context.read<AuthService>();
     _firstNameCtrl = TextEditingController(text: auth.firstName ?? '');
     _lastNameCtrl = TextEditingController(text: auth.lastName ?? '');
-    _emailCtrl = TextEditingController(text: auth.email ?? '');
     _phoneCtrl = TextEditingController(text: auth.phone ?? '');
   }
 
@@ -34,7 +33,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
   void dispose() {
     _firstNameCtrl.dispose();
     _lastNameCtrl.dispose();
-    _emailCtrl.dispose();
     _phoneCtrl.dispose();
     super.dispose();
   }
@@ -55,6 +53,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
     await context.read<AuthService>().signOut();
     if (!mounted) return;
+    await context.read<AppState>().clearCurrentUserAndData();
+    if (!mounted) return;
 
     Navigator.of(context).pushAndRemoveUntil(
       MaterialPageRoute(builder: (_) => const AppRoot()),
@@ -69,7 +69,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     await context.read<AuthService>().updateProfile(
           firstName: _firstNameCtrl.text,
           lastName: _lastNameCtrl.text,
-          email: _emailCtrl.text,
           phone: _phoneCtrl.text,
         );
 
@@ -151,9 +150,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     const Text('Email', style: TextStyle(fontSize: 12, color: PsEvColors.mutedText)),
                     const SizedBox(height: 4),
                     TextFormField(
-                      controller: _emailCtrl,
-                      keyboardType: TextInputType.emailAddress,
-                      validator: (v) => (v == null || !v.contains('@')) ? 'Enter a valid email' : null,
+                      initialValue: auth.email ?? '',
+                      enabled: false,
+                      decoration: const InputDecoration(
+                        helperText: 'Email is tied to your sign-in and cannot be changed here.',
+                        helperMaxLines: 2,
+                      ),
                     ),
                     const SizedBox(height: 12),
                     const Text('Phone number', style: TextStyle(fontSize: 12, color: PsEvColors.mutedText)),

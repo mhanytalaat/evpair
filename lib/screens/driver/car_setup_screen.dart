@@ -142,7 +142,7 @@ class _CarSetupScreenState extends State<CarSetupScreen> {
                     onTap: () {
                       final car = CarProfile(
                         carId: widget.existing?.carId ?? 'car_${DateTime.now().millisecondsSinceEpoch}',
-                        driverId: kCurrentUserId,
+                        driverId: app.currentUserId ?? '',
                         brand: _brand,
                         model: _model,
                         maxAmpere: _ampere,

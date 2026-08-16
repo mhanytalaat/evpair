@@ -1,8 +1,10 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../services/auth_service.dart';
 import '../../theme/ps_ev_theme.dart';
 import '../../theme/ps_ev_app_bar.dart';
+import '../../state/app_state.dart';
 import 'sign_in_screen.dart';
 
 class RegisterScreen extends StatefulWidget {
@@ -18,6 +20,56 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final _lastNameCtrl = TextEditingController();
   final _emailCtrl = TextEditingController();
   final _phoneCtrl = TextEditingController();
+  final _passwordCtrl = TextEditingController();
+  final _confirmPasswordCtrl = TextEditingController();
+
+  bool _submitting = false;
+  String? _error;
+  bool _obscurePassword = true;
+
+  @override
+  void dispose() {
+    _firstNameCtrl.dispose();
+    _lastNameCtrl.dispose();
+    _emailCtrl.dispose();
+    _phoneCtrl.dispose();
+    _passwordCtrl.dispose();
+    _confirmPasswordCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    if (!_formKey.currentState!.validate()) return;
+    setState(() {
+      _submitting = true;
+      _error = null;
+    });
+
+    try {
+      await context.read<AuthService>().register(
+            firstName: _firstNameCtrl.text.trim(),
+            lastName: _lastNameCtrl.text.trim(),
+            email: _emailCtrl.text.trim(),
+            phone: _phoneCtrl.text.trim(),
+            password: _passwordCtrl.text,
+          );
+      if (!mounted) return;
+
+      final uid = context.read<AuthService>().uid;
+      if (uid != null) {
+        await context.read<AppState>().setCurrentUserAndHydrate(uid);
+      }
+
+      if (!mounted) return;
+      Navigator.pop(context, true);
+    } on FirebaseAuthException catch (e) {
+      setState(() => _error = AuthService.messageForAuthError(e));
+    } catch (e) {
+      setState(() => _error = 'Registration failed: $e');
+    } finally {
+      if (mounted) setState(() => _submitting = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -71,33 +123,49 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         keyboardType: TextInputType.phone,
                         validator: (v) => (v == null || v.trim().isEmpty) ? 'Enter your phone number' : null,
                       ),
+                      const SizedBox(height: 12),
+                      const Text('Password', style: TextStyle(fontSize: 12, color: PsEvColors.mutedText)),
+                      const SizedBox(height: 4),
+                      TextFormField(
+                        controller: _passwordCtrl,
+                        obscureText: _obscurePassword,
+                        decoration: InputDecoration(
+                          suffixIcon: IconButton(
+                            icon: Icon(_obscurePassword ? Icons.visibility_off : Icons.visibility),
+                            onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
+                          ),
+                        ),
+                        validator: (v) => (v == null || v.length < 6) ? 'At least 6 characters' : null,
+                      ),
+                      const SizedBox(height: 12),
+                      const Text('Confirm password', style: TextStyle(fontSize: 12, color: PsEvColors.mutedText)),
+                      const SizedBox(height: 4),
+                      TextFormField(
+                        controller: _confirmPasswordCtrl,
+                        obscureText: _obscurePassword,
+                        validator: (v) => (v != _passwordCtrl.text) ? 'Passwords do not match' : null,
+                      ),
+                      if (_error != null) ...[
+                        const SizedBox(height: 12),
+                        Text(_error!, style: const TextStyle(color: PsEvColors.red, fontSize: 12)),
+                      ],
                       const SizedBox(height: 16),
                       PsEvFilledButton(
-                        label: 'Register & Continue',
-                      onTap: () async {
-                        if (!_formKey.currentState!.validate()) return;
-                        await context.read<AuthService>().register(
-                              firstName: _firstNameCtrl.text.trim(),
-                              lastName: _lastNameCtrl.text.trim(),
-                              email: _emailCtrl.text.trim(),
-                              phone: _phoneCtrl.text.trim(),
-                            );
-                        if (!context.mounted) return;
-                        Navigator.pop(context, true);
-                      },
-
-
+                        label: _submitting ? 'Creating account...' : 'Register & Continue',
+                        onTap: _submitting ? null : _submit,
                       ),
                       const SizedBox(height: 10),
                       Center(
                         child: TextButton(
-                          onPressed: () async {
-                            final result = await Navigator.push<bool>(
-                              context,
-                              MaterialPageRoute(builder: (_) => const SignInScreen()),
-                            );
-                            if (result == true && context.mounted) Navigator.pop(context, true);
-                          },
+                          onPressed: _submitting
+                              ? null
+                              : () async {
+                                  final result = await Navigator.push<bool>(
+                                    context,
+                                    MaterialPageRoute(builder: (_) => const SignInScreen()),
+                                  );
+                                  if (result == true && context.mounted) Navigator.pop(context, true);
+                                },
                           child: const Text('Already have an account? Sign In'),
                         ),
                       ),

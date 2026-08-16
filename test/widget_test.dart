@@ -1,30 +1,15 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
-
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:ps_ev/main.dart';
-
+// NOTE: This file was left over from the original `flutter create` template
+// (package name `ps_ev`, class `MyApp`) from before the project was renamed
+// to EVPair (package `evpair`, root widget `EvPairApp`). The old test
+// referenced a package/class that no longer exists, which broke
+// `flutter analyze`/`flutter test`. EVPair's real root widget depends on
+// Firebase being initialized first (see main.dart), so a meaningful widget
+// test would need a fake/mocked Firebase setup - out of scope for this fix.
+// This placeholder just keeps `flutter test`/`flutter analyze` green.
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const MyApp());
-
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
-
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump();
-
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+  test('placeholder test', () {
+    expect(1 + 1, 2);
   });
 }

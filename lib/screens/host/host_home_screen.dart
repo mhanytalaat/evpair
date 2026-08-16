@@ -29,7 +29,7 @@ class _HostHomeScreenState extends State<HostHomeScreen> {
     final app = context.watch<AppState>();
     final bookingService = context.watch<BookingService>();
     final chargers = app.myChargers;
-    final activeSessions = bookingService.activeForHost(kCurrentUserId).length;
+    final activeSessions = bookingService.activeForHost(app.currentUserId ?? '').length;
     return Scaffold(
       appBar: PsEvAppBar(
         title: 'Host Home',
@@ -48,9 +48,9 @@ class _HostHomeScreenState extends State<HostHomeScreen> {
             )
           else
             ...chargers.map((ch) {
-              final pendingCount = bookingService.pendingApprovalsForHost(kCurrentUserId).where((b) => b.chargerId == ch.chargerId).length;
-              final bookedCount = bookingService.confirmedForHost(kCurrentUserId).where((b) => b.chargerId == ch.chargerId).length;
-              final chargingCount = bookingService.inProgressForHost(kCurrentUserId).where((b) => b.chargerId == ch.chargerId).length;
+              final pendingCount = bookingService.pendingApprovalsForHost(app.currentUserId ?? '').where((b) => b.chargerId == ch.chargerId).length;
+              final bookedCount = bookingService.confirmedForHost(app.currentUserId ?? '').where((b) => b.chargerId == ch.chargerId).length;
+              final chargingCount = bookingService.inProgressForHost(app.currentUserId ?? '').where((b) => b.chargerId == ch.chargerId).length;
               return Card(
                 child: InkWell(
                   borderRadius: BorderRadius.circular(PsEvRadii.card),

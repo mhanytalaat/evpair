@@ -89,8 +89,54 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
     final wallet = context.watch<WalletService>();
     final bookingService = context.watch<BookingService>();
     final chargers = app.chargers;
-    final walletBalance = wallet.balanceOf(kCurrentUserId);
+    final walletBalance = wallet.balanceOf(app.currentUserId ?? '');
     final activeBooking = app.lastDriverBookingId == null ? null : bookingService.findById(app.lastDriverBookingId!);
+
+    // There is no bundled demo data - if no host has added a charger yet
+    // (fresh Firestore project, or all seed data was cleared), show a
+    // friendly empty state instead of crashing on chargers.first below.
+    if (chargers.isEmpty) {
+      return Scaffold(
+        appBar: PsEvAppBar(
+          title: 'Find a Charger',
+          showBrandRow: true,
+          actions: const [PsEvModePill(label: 'driver mode')],
+        ),
+        body: ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(PsEvRadii.card),
+              child: Image.asset(
+                'assets/images/charger_header.png',
+                height: 150,
+                width: double.infinity,
+                fit: BoxFit.cover,
+              ),
+            ),
+            const SizedBox(height: 24),
+            const Center(
+              child: Column(
+                children: [
+                  Icon(Icons.ev_station, size: 48, color: PsEvColors.mutedText),
+                  SizedBox(height: 12),
+                  Text(
+                    'No chargers available yet',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                  ),
+                  SizedBox(height: 6),
+                  Text(
+                    'Once a host adds a charging station, it will show up here for booking.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: PsEvColors.mutedText, fontSize: 13),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
 
     final selected = chargers.firstWhere(
       (c) => c.chargerId == (_selectedChargerId ?? chargers.first.chargerId),
@@ -175,6 +221,16 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
                           TileLayer(
                             urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                             userAgentPackageName: 'com.evpairapp.evpair',
+                            maxNativeZoom: 19,
+                            // Logs tile load failures to the console (visible in
+                            // Xcode/Android Studio device logs) instead of
+                            // failing silently as a grey box - if the map is
+                            // grey, check the console for this message, which
+                            // usually points to a missing network/location
+                            // permission or no internet connectivity.
+                            errorTileCallback: (tile, error, stackTrace) {
+                              debugPrint('Map tile failed to load (${tile.coordinates}): $error');
+                            },
                           ),
                           MarkerLayer(
                             markers: chargers.map((ch) {

@@ -39,8 +39,9 @@ class _HostScanScreenState extends State<HostScanScreen> {
   @override
   Widget build(BuildContext context) {
     final bookingService = context.watch<BookingService>();
-    final confirmed = bookingService.confirmedForHost(kCurrentUserId);
-    final inProgress = bookingService.inProgressForHost(kCurrentUserId);
+    final currentUserId = context.watch<AppState>().currentUserId ?? '';
+    final confirmed = bookingService.confirmedForHost(currentUserId);
+    final inProgress = bookingService.inProgressForHost(currentUserId);
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;

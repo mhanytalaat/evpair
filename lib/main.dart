@@ -20,14 +20,17 @@ Future<void> main() async {
 
   final walletService = WalletService ();
 
-  // Restore a previously signed-in session (if any) and load this user's
-  // cars/chargers from Firestore before the first frame is drawn, so a
-  // returning user lands straight in the app with their data already in
-  // place instead of seeing empty/guest state momentarily.
+  // Firebase Auth persists sessions natively (no manual storage needed).
+  // Restore any existing session and load this user's cars + the charger
+  // marketplace before the first frame is drawn, so a returning user
+  // lands straight in the app with their data already in place.
   final authService = AuthService();
   await authService.tryAutoSignIn();
 
   final appState = AppState();
+  if (authService.uid != null) {
+    appState.currentUserId = authService.uid;
+  }
   await appState.hydrateFromFirestore();
 
     runApp(

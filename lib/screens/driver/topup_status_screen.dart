@@ -11,8 +11,9 @@ class TopUpStatusScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final wallet = context.watch<WalletService>();
-    final pending = wallet.pendingTopUps.where((t) => t.driverId == kCurrentUserId).isNotEmpty;
-    final balance = wallet.balanceOf(kCurrentUserId);
+    final currentUserId = context.watch<AppState>().currentUserId ?? '';
+    final pending = wallet.pendingTopUps.where((t) => t.driverId == currentUserId).isNotEmpty;
+    final balance = wallet.balanceOf(currentUserId);
 
     return Scaffold(
       appBar: const PsEvAppBar(title: 'Top-Up Status'),

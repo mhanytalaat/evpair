@@ -12,7 +12,8 @@ class WalletScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final wallet = context.watch<WalletService>();
-    final balance = wallet.balanceOf(kCurrentUserId);
+    final currentUserId = context.watch<AppState>().currentUserId ?? '';
+    final balance = wallet.balanceOf(currentUserId);
 
     return Scaffold(
       appBar: const PsEvAppBar(title: 'My Wallet'),
@@ -46,7 +47,7 @@ class WalletScreen extends StatelessWidget {
           const SizedBox(height: 8),
           const Text('Transaction history', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
           const SizedBox(height: 8),
-          ...wallet.ledgerFor(kCurrentUserId).map((e) => Card(
+          ...wallet.ledgerFor(currentUserId).map((e) => Card(
                 child: ListTile(
                   leading: Icon(
                     e.amount >= 0 ? Icons.arrow_downward : Icons.arrow_upward,

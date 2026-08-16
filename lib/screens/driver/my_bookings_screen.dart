@@ -55,7 +55,8 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
   @override
   Widget build(BuildContext context) {
     final bookingService = context.watch<BookingService>();
-    final bookings = bookingService.ongoingForDriver(kCurrentUserId).reversed.toList();
+    final currentUserId = context.watch<AppState>().currentUserId ?? '';
+    final bookings = bookingService.ongoingForDriver(currentUserId).reversed.toList();
     final dateFmt = DateFormat('EEE, MMM d • h:mm a');
 
     return Scaffold(
