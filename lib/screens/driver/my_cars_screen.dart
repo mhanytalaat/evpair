@@ -6,6 +6,7 @@ import '../../theme/ps_ev_theme.dart';
 import '../../theme/ps_ev_app_bar.dart';
 import 'car_setup_screen.dart';
 import '../../models/enums.dart';
+import '../auth/register_screen.dart';
 
 class MyCarsScreen extends StatefulWidget {
   const MyCarsScreen({super.key});
@@ -15,11 +16,15 @@ class MyCarsScreen extends StatefulWidget {
 
 class _MyCarsScreenState extends State<MyCarsScreen> {
   Future<void> _openAdd() async {
+    final ok = await ensureRegistered(context);
+    if (!ok || !mounted) return;
     await Navigator.push(context, MaterialPageRoute(builder: (_) => const CarSetupScreen()));
     setState(() {});
   }
 
   Future<void> _openEdit(CarProfile car) async {
+    final ok = await ensureRegistered(context);
+    if (!ok || !mounted) return;
     await Navigator.push(context, MaterialPageRoute(builder: (_) => CarSetupScreen(existing: car)));
     setState(() {});
   }

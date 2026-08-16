@@ -123,7 +123,11 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
           PsEvHeaderAction(
             icon: Icons.account_balance_wallet_outlined,
             tooltip: 'Wallet',
-            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const WalletScreen())),
+            onPressed: () async {
+              final ok = await ensureRegistered(context);
+              if (!ok || !context.mounted) return;
+              Navigator.push(context, MaterialPageRoute(builder: (_) => const WalletScreen()));
+            },
           ),
           PsEvHeaderAction(
             icon: Icons.electric_car,
@@ -450,7 +454,11 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
           title: 'My Wallet',
           subtitle: '${walletBalance.toStringAsFixed(0)} EGP',
           buttonText: 'Top Up (InstaPay / Vodafone Cash)',
-          onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const WalletScreen())),
+          onTap: () async {
+            final ok = await ensureRegistered(context);
+            if (!ok || !context.mounted) return;
+            Navigator.push(context, MaterialPageRoute(builder: (_) => const WalletScreen()));
+          },
         ),
         _dashboardCard(
           icon: '🚗',

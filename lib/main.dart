@@ -20,17 +20,27 @@ Future<void> main() async {
 
   final walletService = WalletService ();
 
+  // Restore a previously signed-in session (if any) and load this user's
+  // cars/chargers from Firestore before the first frame is drawn, so a
+  // returning user lands straight in the app with their data already in
+  // place instead of seeing empty/guest state momentarily.
+  final authService = AuthService();
+  await authService.tryAutoSignIn();
+
+  final appState = AppState();
+  await appState.hydrateFromFirestore();
+
     runApp(
         MultiProvider(
             providers: [
-              ChangeNotifierProvider(create: (_) => AppState(),),
+              ChangeNotifierProvider<AppState>.value(value: appState,),
                 ChangeNotifierProvider<WalletService>.value(value: walletService,),
                 ChangeNotifierProvider(create: (_) => BookingService(walletService:walletService,
                 ),
                 ),
                 
-                Provider(
-                  create: (_) => AuthService()
+                ChangeNotifierProvider<AuthService>.value(
+                  value: authService,
                   ),
 
 

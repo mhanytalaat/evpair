@@ -1,5 +1,10 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+/// Key used to persist the signed-in user's email locally so the session
+/// survives an app/browser restart until the user explicitly signs out.
+const String _kSessionEmailPrefKey = 'evpair_session_email';
 
 class AuthService extends ChangeNotifier {
   final FirebaseFirestore _db;
@@ -8,6 +13,9 @@ class AuthService extends ChangeNotifier {
 
   bool isRegistered = false;
   bool isLoadingProfile = false;
+
+  /// True while we're checking for a previously saved session on app start.
+  bool isInitializing = true;
 
   String? firstName;
   String? lastName;
@@ -61,6 +69,76 @@ class AuthService extends ChangeNotifier {
     notifyListeners();
 
     await saveProfileToFirestore();
+    await _persistSession(this.email!);
+  }
+
+  /// Signs an existing user in by email. Returns true if a matching
+  /// Firestore profile was found and loaded, false otherwise.
+  Future<bool> signIn(String emailAddress) async {
+    final id = _docIdFor(emailAddress);
+    if (id == null) return false;
+
+    isLoadingProfile = true;
+    notifyListeners();
+
+    final doc = await _db.collection('users').doc(id).get();
+    final data = doc.data();
+    isLoadingProfile = false;
+
+    if (data == null) {
+      notifyListeners();
+      return false;
+    }
+
+    firstName = data['firstName'] as String?;
+    lastName = data['lastName'] as String?;
+    email = data['email'] as String?;
+    phone = data['phone'] as String?;
+    isRegistered = true;
+    notifyListeners();
+
+    await _persistSession(email ?? emailAddress);
+    return true;
+  }
+
+  /// Signs the current user out and forgets the persisted session.
+  Future<void> signOut() async {
+    firstName = null;
+    lastName = null;
+    email = null;
+    phone = null;
+    isRegistered = false;
+    notifyListeners();
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_kSessionEmailPrefKey);
+  }
+
+  /// Call once on app start to restore a previously signed-in session.
+  Future<void> tryAutoSignIn() async {
+    isInitializing = true;
+    notifyListeners();
+
+    final prefs = await SharedPreferences.getInstance();
+    final savedEmail = prefs.getString(_kSessionEmailPrefKey);
+
+    if (savedEmail != null && savedEmail.trim().isNotEmpty) {
+      await loadProfileFromFirestore(savedEmail);
+    }
+
+    isInitializing = false;
+    notifyListeners();
+  }
+
+  Future<void> _persistSession(String emailAddress) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_kSessionEmailPrefKey, emailAddress.trim().toLowerCase());
+  }
+
+  String? _docIdFor(String emailAddress) {
+    final value = emailAddress.trim().toLowerCase();
+    if (value.isEmpty || !value.contains('@')) return null;
+    return value.replaceAll(RegExp(r'[^a-z0-9@._-]'), '_');
   }
 
   Future<void> updateProfile({

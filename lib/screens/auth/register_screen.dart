@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../../services/auth_service.dart';
 import '../../theme/ps_ev_theme.dart';
 import '../../theme/ps_ev_app_bar.dart';
+import 'sign_in_screen.dart';
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
@@ -87,6 +88,19 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
 
                       ),
+                      const SizedBox(height: 10),
+                      Center(
+                        child: TextButton(
+                          onPressed: () async {
+                            final result = await Navigator.push<bool>(
+                              context,
+                              MaterialPageRoute(builder: (_) => const SignInScreen()),
+                            );
+                            if (result == true && context.mounted) Navigator.pop(context, true);
+                          },
+                          child: const Text('Already have an account? Sign In'),
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -99,9 +113,57 @@ class _RegisterScreenState extends State<RegisterScreen> {
   }
 }
 
+/// Ensures the user is authenticated before proceeding with an action that
+/// requires an account (adding a car, adding a charger, booking, etc.).
+/// If the user is a guest, presents a choice between Sign In (existing
+/// account) and Register (new account) before allowing the action.
 Future<bool> ensureRegistered(BuildContext context) async {
   final auth = context.read<AuthService>();
   if (auth.isRegistered) return true;
+
+  final choice = await showModalBottomSheet<String>(
+    context: context,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+    ),
+    builder: (ctx) => SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 8, 16, 4),
+              child: Text(
+                'Please sign in or register to continue',
+                style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+              ),
+            ),
+            ListTile(
+              leading: const Icon(Icons.login, color: PsEvColors.emerald),
+              title: const Text('Sign In'),
+              subtitle: const Text('I already have an account'),
+              onTap: () => Navigator.pop(ctx, 'signin'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.person_add, color: PsEvColors.emerald),
+              title: const Text('Register'),
+              subtitle: const Text('Create a new account'),
+              onTap: () => Navigator.pop(ctx, 'register'),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+
+  if (choice == null || !context.mounted) return false;
+
+  if (choice == 'signin') {
+    final result = await Navigator.push<bool>(context, MaterialPageRoute(builder: (_) => const SignInScreen()));
+    return result == true;
+  }
+
   final result = await Navigator.push<bool>(context, MaterialPageRoute(builder: (_) => const RegisterScreen()));
   return result == true;
 }

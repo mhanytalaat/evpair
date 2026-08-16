@@ -10,6 +10,7 @@ import '../../models/enums.dart';
 import '../../services/booking_service.dart';
 import '../../theme/ps_ev_theme.dart';
 import '../../theme/ps_ev_app_bar.dart';
+import '../auth/register_screen.dart';
 import 'charger_form_screen.dart';
 
 /// Pushed screen: manage a single charger's FREE WINDOWS, its pending
@@ -161,7 +162,11 @@ class _ManageChargerScreenState extends State<ManageChargerScreen> {
   }
 
   Future<void> _openEdit() async {
-    await Navigator.push(context, MaterialPageRoute(builder: (_) => ChargerFormScreen(existing: widget.charger)));
+    final ok = await ensureRegistered(context);
+    if (!ok || !context.mounted) return;
+    // ChargerFormScreen persists the edit (via AppState.updateCharger) on
+    // save, so we just need to rebuild this screen with the updated data.
+    await Navigator.push<bool>(context, MaterialPageRoute(builder: (_) => ChargerFormScreen(existing: widget.charger)));
     setState(() {});
   }
 

@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../../services/auth_service.dart';
 import '../../theme/ps_ev_theme.dart';
+import '../root/app_root.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -36,6 +37,29 @@ class _ProfileScreenState extends State<ProfileScreen> {
     _emailCtrl.dispose();
     _phoneCtrl.dispose();
     super.dispose();
+  }
+
+  Future<void> _signOut() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Sign Out'),
+        content: const Text('Are you sure you want to sign out of your EVPair account?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Sign Out')),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    await context.read<AuthService>().signOut();
+    if (!mounted) return;
+
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const AppRoot()),
+      (route) => false,
+    );
   }
 
   Future<void> _save() async {
@@ -150,6 +174,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
               ),
             ),
           ),
+          if (auth.isRegistered) ...[
+            const SizedBox(height: 12),
+            PsEvFilledButton(
+              label: 'Sign Out',
+              icon: Icons.logout,
+              color: PsEvColors.red,
+              onTap: _signOut,
+            ),
+          ],
         ],
       ),
     );

@@ -55,6 +55,8 @@ class _HostHomeScreenState extends State<HostHomeScreen> {
                 child: InkWell(
                   borderRadius: BorderRadius.circular(PsEvRadii.card),
                   onTap: () async {
+                    final ok = await ensureRegistered(context);
+                    if (!ok || !context.mounted) return;
                     await Navigator.push(context, MaterialPageRoute(builder: (_) => ManageChargerScreen(charger: ch)));
                     setState(() {});
                   },

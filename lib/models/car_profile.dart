@@ -1,3 +1,4 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'enums.dart';
 
 class CarProfile {
@@ -30,4 +31,36 @@ class CarProfile {
   }
 
   bool isCompatibleStandard(ChargingStandard chargerStandard) => chargingStandard == chargerStandard;
+
+  /// Firestore document shape for the `cars` collection. Field names match
+  /// what is actually used in the UI (see CarSetupScreen/MyCarsScreen)
+  /// rather than a generic placeholder schema.
+  Map<String, dynamic> toFirestore() {
+    return {
+      'carId': carId,
+      'driverId': driverId,
+      'brand': brand,
+      'model': model,
+      'maxAmpere': maxAmpere,
+      'rangeKm': rangeKm,
+      'connector': connector.name,
+      'chargingStandard': chargingStandard.name,
+      'community': community,
+      'updatedAt': FieldValue.serverTimestamp(),
+    };
+  }
+
+  factory CarProfile.fromFirestore(Map<String, dynamic> data) {
+    return CarProfile(
+      carId: data['carId'] as String,
+      driverId: data['driverId'] as String,
+      brand: data['brand'] as String,
+      model: data['model'] as String,
+      maxAmpere: (data['maxAmpere'] as num).toDouble(),
+      rangeKm: (data['rangeKm'] as num).toDouble(),
+      connector: ConnectorType.values.byName(data['connector'] as String),
+      chargingStandard: ChargingStandard.values.byName(data['chargingStandard'] as String),
+      community: data['community'] as String?,
+    );
+  }
 }

@@ -1,3 +1,4 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import '../models/car_profile.dart';
 import '../models/charger_profile.dart';
@@ -94,6 +95,15 @@ const Map<String, List<String>> kCarBrandModels = {
 };
 
 class AppState extends ChangeNotifier {
+  AppState({FirebaseFirestore? firestore}) : _db = firestore ?? FirebaseFirestore.instance;
+
+  final FirebaseFirestore _db;
+
+  /// True while cars/chargers are being loaded from Firestore on startup.
+  /// The root/driver/host screens can use this to show a brief loading
+  /// state instead of a flash of empty data.
+  bool isHydrating = true;
+
   AppRole role = AppRole.driver;
 
   final List<CarProfile> cars = [];
@@ -184,16 +194,52 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Loads this user's cars and chargers from Firestore, called once on
+  /// app start (see main.dart). Cars are loaded fresh from the `cars`
+  /// collection. For chargers: if Firestore already has documents for
+  /// this host (e.g. from a previous session), those replace the
+  /// in-memory seed chargers below; otherwise the seed chargers are
+  /// pushed to Firestore once so nothing is lost going forward.
+  Future<void> hydrateFromFirestore() async {
+    isHydrating = true;
+    notifyListeners();
+
+    try {
+      final carsSnapshot = await _db.collection('cars').where('driverId', isEqualTo: kCurrentUserId).get();
+      cars
+        ..clear()
+        ..addAll(carsSnapshot.docs.map((d) => CarProfile.fromFirestore(d.data())));
+      activeCarId = cars.isEmpty ? null : cars.first.carId;
+
+      final chargersSnapshot = await _db.collection('chargers').where('hostId', isEqualTo: kCurrentUserId).get();
+      if (chargersSnapshot.docs.isNotEmpty) {
+        chargers.removeWhere((c) => c.hostId == kCurrentUserId);
+        chargers.addAll(chargersSnapshot.docs.map((d) => ChargerProfile.fromFirestore(d.data())));
+      } else {
+        for (final seed in chargers.where((c) => c.hostId == kCurrentUserId).toList()) {
+          await _db.collection('chargers').doc(seed.chargerId).set(seed.toFirestore(), SetOptions(merge: true));
+        }
+      }
+    } catch (e) {
+      debugPrint('AppState.hydrateFromFirestore failed: $e');
+    }
+
+    isHydrating = false;
+    notifyListeners();
+  }
+
   void addCar(CarProfile c) {
     cars.add(c);
     activeCarId ??= c.carId;
     notifyListeners();
+    _db.collection('cars').doc(c.carId).set(c.toFirestore(), SetOptions(merge: true));
   }
 
   void updateCar(CarProfile updated) {
     final idx = cars.indexWhere((c) => c.carId == updated.carId);
     if (idx != -1) cars[idx] = updated;
     notifyListeners();
+    _db.collection('cars').doc(updated.carId).set(updated.toFirestore(), SetOptions(merge: true));
   }
 
   void removeCar(String carId) {
@@ -202,6 +248,7 @@ class AppState extends ChangeNotifier {
       activeCarId = cars.isEmpty ? null : cars.first.carId;
     }
     notifyListeners();
+    _db.collection('cars').doc(carId).delete();
   }
 
   void setActiveCar(String carId) {
@@ -212,6 +259,22 @@ class AppState extends ChangeNotifier {
   void addCharger(ChargerProfile c) {
     chargers.add(c);
     notifyListeners();
+    _db.collection('chargers').doc(c.chargerId).set(c.toFirestore(), SetOptions(merge: true));
+  }
+
+  /// Persists in-place edits made to an existing ChargerProfile (see
+  /// ChargerFormScreen, which mutates the object's fields directly rather
+  /// than constructing a new instance). Call this after mutating a
+  /// charger so listeners are notified and Firestore stays in sync.
+  void updateCharger(ChargerProfile updated) {
+    notifyListeners();
+    _db.collection('chargers').doc(updated.chargerId).set(updated.toFirestore(), SetOptions(merge: true));
+  }
+
+  void removeCharger(String chargerId) {
+    chargers.removeWhere((c) => c.chargerId == chargerId);
+    notifyListeners();
+    _db.collection('chargers').doc(chargerId).delete();
   }
 
   void setLastDriverBooking(String bookingId) {

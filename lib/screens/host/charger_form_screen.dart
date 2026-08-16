@@ -164,6 +164,7 @@ class _ChargerFormScreenState extends State<ChargerFormScreen> {
       ch.chargingStandard = _chargingStandard;
       ch.latitude = coords.lat;
       ch.longitude = coords.lng;
+      app.updateCharger(ch);
       Navigator.pop(context, true);
     } else {
       final charger = ChargerProfile(
