@@ -102,6 +102,7 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
           showBrandRow: true,
           actions: const [PsEvModePill(label: 'driver mode')],
         ),
+        bottomNavigationBar: _buildFooterNav(context, app),
         body: ListView(
           padding: const EdgeInsets.all(16),
           children: [
@@ -159,37 +160,9 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
       appBar: PsEvAppBar(
         title: 'Find a Charger',
         showBrandRow: true,
-        actions: [
-          const PsEvModePill(label: 'driver mode'),
-          PsEvHeaderAction(
-            icon: Icons.list_alt,
-            tooltip: 'My Bookings',
-            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const MyBookingsScreen())),
-          ),
-          PsEvHeaderAction(
-            icon: Icons.account_balance_wallet_outlined,
-            tooltip: 'Wallet',
-            onPressed: () async {
-              final ok = await ensureRegistered(context);
-              if (!ok || !context.mounted) return;
-              Navigator.push(context, MaterialPageRoute(builder: (_) => const WalletScreen()));
-            },
-          ),
-          PsEvHeaderAction(
-            icon: Icons.electric_car,
-            tooltip: 'My Cars',
-            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const MyCarsScreen())),
-          ),
-          PsEvHeaderAction(
-            icon: Icons.smartphone,
-            tooltip: 'Last Booking Status',
-            onPressed: app.lastDriverBookingId == null
-                ? null
-                : () => Navigator.push(context, MaterialPageRoute(builder: (_) => BookingStatusScreen(bookingId: app.lastDriverBookingId!))),
-            disabledMessage: 'No active booking yet. Book a charger first.',
-          ),
-        ],
+        actions: const [PsEvModePill(label: 'driver mode')],
       ),
+      bottomNavigationBar: _buildFooterNav(context, app),
       body: ListView(
         controller: _scrollController,
         padding: const EdgeInsets.all(16),
@@ -491,6 +464,103 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
             bookingText: activeBooking == null ? 'No active booking' : activeBooking.status.name,
           ),
         ],
+      ),
+    );
+  }
+
+  /// Footer navigation (previously these 4 shortcuts lived as icons in
+  /// the top AppBar). Order: Wallet, My Cars, Active Booking (Book a
+  /// Charge), then My Bookings last - styled differently (pill highlight)
+  /// since it's the primary/most-used shortcut.
+  Widget _buildFooterNav(BuildContext context, AppState app) {
+    final hasActiveBooking = app.lastDriverBookingId != null;
+
+    return SafeArea(
+      top: false,
+      child: Container(
+        height: 72,
+                decoration: const BoxDecoration(
+          color: Colors.white,
+          border: Border(top: BorderSide(color: PsEvColors.slate200, width: 1)),
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+        child: Row(
+          children: [
+            _footerItem(
+              icon: Icons.account_balance_wallet,
+              label: 'My Wallet',
+              onTap: () async {
+                final ok = await ensureRegistered(context);
+                if (!ok || !context.mounted) return;
+                Navigator.push(context, MaterialPageRoute(builder: (_) => const WalletScreen()));
+              },
+            ),
+            _footerItem(
+              icon: Icons.electric_car,
+              label: 'My Cars',
+              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const MyCarsScreen())),
+            ),
+            _footerItem(
+              icon: Icons.bolt,
+              label: hasActiveBooking ? 'Active Booking' : 'Book a Charge',
+              onTap: hasActiveBooking
+                  ? () => Navigator.push(context, MaterialPageRoute(builder: (_) => BookingStatusScreen(bookingId: app.lastDriverBookingId!)))
+                  : () => _scrollController.animateTo(0, duration: const Duration(milliseconds: 350), curve: Curves.easeOut),
+            ),
+            _footerItemHighlighted(
+              icon: Icons.list_alt,
+              label: 'My Bookings',
+              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const MyBookingsScreen())),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _footerItem({required IconData icon, required String label, required VoidCallback onTap}) {
+    return Expanded(
+      child: InkWell(
+        borderRadius: BorderRadius.circular(PsEvRadii.button),
+        onTap: onTap,
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, size: 22, color: PsEvColors.mutedText),
+            const SizedBox(height: 4),
+            Text(label, style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: PsEvColors.mutedText)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // The last footer icon (My Bookings) is intentionally differentiated
+  // from the others with a filled emerald pill so it stands out as the
+  // primary shortcut.
+  Widget _footerItemHighlighted({required IconData icon, required String label, required VoidCallback onTap}) {
+    return Expanded(
+      child: InkWell(
+        borderRadius: BorderRadius.circular(PsEvRadii.button),
+        onTap: onTap,
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              width: 40,
+              height: 28,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: PsEvColors.emerald,
+                borderRadius: BorderRadius.circular(PsEvRadii.pill),
+                boxShadow: [BoxShadow(color: PsEvColors.emerald.withOpacity(0.35), blurRadius: 6, offset: const Offset(0, 2))],
+              ),
+              child: Icon(icon, size: 18, color: Colors.white),
+            ),
+            const SizedBox(height: 4),
+            Text(label, style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: PsEvColors.emerald)),
+          ],
+        ),
       ),
     );
   }

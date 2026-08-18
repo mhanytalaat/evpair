@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../screens/profile/profile_screen.dart';
 import '../services/auth_service.dart';
 import 'ps_ev_theme.dart';
+import '../screens/auth/sign_in_screen.dart';
 
 class PsEvAppBar extends StatelessWidget implements PreferredSizeWidget {
   final String title;
@@ -35,10 +36,21 @@ class PsEvAppBar extends StatelessWidget implements PreferredSizeWidget {
             builder: (context, auth, _) {
               return InkWell(
                 borderRadius: BorderRadius.circular(999),
-                onTap: () => Navigator.push(
+                onTap: () {
+                  if (!auth.isRegistered) {
+                    Navigator.push( 
+                      context,
+                     MaterialPageRoute(builder: (context) => const SignInScreen(),
+                    ),
+                    );
+                    return;
+                  }
+                Navigator.push(
                   context,
-                  MaterialPageRoute(builder: (_) => const ProfileScreen()),
-                ),
+                  MaterialPageRoute(builder: (context) => const ProfileScreen(),
+                  ),
+                );
+              },
                 child: CircleAvatar(
                   radius: 18,
                   backgroundColor: PsEvColors.emerald,
