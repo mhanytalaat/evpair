@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../services/wallet_service.dart';
 import '../../services/booking_service.dart';
 import '../../models/enums.dart';
@@ -39,7 +40,6 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
   Widget build(BuildContext context) {
     final wallet = context.watch<WalletService>();
     final bookingService = context.watch<BookingService>();
-
     return Scaffold(
       appBar: PsEvAppBar(title: 'Admin Panel', showBrandRow: true, actions: const [PsEvModePill(label: 'admin mode')]),
       body: Column(
@@ -92,7 +92,8 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('Driver: ${t.driverId}', style: const TextStyle(fontWeight: FontWeight.bold)),
+                  _UserInfoText(uid: t.driverId),
+                  const SizedBox(height: 4),
                   Text('${t.amount.toStringAsFixed(0)} EGP via ${t.method.name}', style: const TextStyle(color: PsEvColors.mutedText, fontSize: 12)),
                   Text('Ref: ${t.referenceNote}', style: const TextStyle(color: PsEvColors.mutedText, fontSize: 12)),
                   const SizedBox(height: 10),
@@ -112,7 +113,6 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
 
   Widget _buildBookings(BookingService bookingService) {
     final bookings = bookingService.filterByCategory(_bookingFilter).reversed.toList();
-
     return Column(
       children: [
         Padding(
@@ -148,7 +148,7 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
                                     crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
                                       Text(b.chargerName, style: const TextStyle(fontWeight: FontWeight.bold)),
-                                      Text('Driver: ${b.driverId}', style: const TextStyle(fontSize: 12, color: PsEvColors.mutedText)),
+                                      _UserInfoText(uid: b.driverId),
                                       Text(
                                         b.status == BookingStatus.completed
                                             ? 'Charged: ${b.actualCost?.toStringAsFixed(0) ?? '-'} EGP'
@@ -189,6 +189,42 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
       onSelected: (_) => setState(() => _bookingFilter = value),
       selectedColor: PsEvColors.slate950,
       labelStyle: TextStyle(color: active ? Colors.white : PsEvColors.slateText, fontSize: 12),
+    );
+  }
+}
+
+/// Resolves a Firebase Auth uid into the driver's actual first/last name +
+/// mobile number by looking up the Firestore `users` collection, instead of
+/// showing the raw uid. Falls back to the uid itself while loading or if no
+/// profile document is found.
+class _UserInfoText extends StatelessWidget {
+  final String uid;
+  const _UserInfoText({required this.uid});
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+      future: FirebaseFirestore.instance.collection('users').doc(uid).get(),
+      builder: (context, snapshot) {
+        String label = uid;
+        String? phone;
+        if (snapshot.hasData && snapshot.data!.exists) {
+          final data = snapshot.data!.data();
+          final first = data?['firstName'] as String? ?? '';
+          final last = data?['lastName'] as String? ?? '';
+          final name = [first, last].where((s) => s.trim().isNotEmpty).join(' ');
+          if (name.isNotEmpty) label = name;
+          phone = data?['phone'] as String?;
+        }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Driver: $label', style: const TextStyle(fontWeight: FontWeight.bold)),
+            if (phone != null && phone.isNotEmpty)
+              Text('Mobile: $phone', style: const TextStyle(color: PsEvColors.mutedText, fontSize: 12)),
+          ],
+        );
+      },
     );
   }
 }

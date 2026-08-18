@@ -5,6 +5,7 @@ import '../../services/auth_service.dart';
 import '../../theme/ps_ev_theme.dart';
 import '../../theme/ps_ev_app_bar.dart';
 import '../../state/app_state.dart';
+import '../../state/country_codes.dart';
 import 'sign_in_screen.dart';
 
 class RegisterScreen extends StatefulWidget {
@@ -22,10 +23,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final _phoneCtrl = TextEditingController();
   final _passwordCtrl = TextEditingController();
   final _confirmPasswordCtrl = TextEditingController();
-
   bool _submitting = false;
   String? _error;
   bool _obscurePassword = true;
+
+  // Country dial code for the phone number, defaulting to Egypt. Israel is
+  // intentionally excluded from kCountryDialCodes.
+  String _countryCode = '+20';
 
   @override
   void dispose() {
@@ -44,22 +48,19 @@ class _RegisterScreenState extends State<RegisterScreen> {
       _submitting = true;
       _error = null;
     });
-
     try {
       await context.read<AuthService>().register(
             firstName: _firstNameCtrl.text.trim(),
             lastName: _lastNameCtrl.text.trim(),
             email: _emailCtrl.text.trim(),
-            phone: _phoneCtrl.text.trim(),
+            phone: '$_countryCode${_phoneCtrl.text.trim()}',
             password: _passwordCtrl.text,
           );
       if (!mounted) return;
-
       final uid = context.read<AuthService>().uid;
       if (uid != null) {
         await context.read<AppState>().setCurrentUserAndHydrate(uid);
       }
-
       if (!mounted) return;
       Navigator.pop(context, true);
     } on FirebaseAuthException catch (e) {
@@ -74,7 +75,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: const PsEvAppBar(title: 'Create Your Account'),
+      appBar: const PsEvAppBar(title: 'Create Your Account', showProfileAction: false),
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: Form(
@@ -118,10 +119,44 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       const SizedBox(height: 12),
                       const Text('Phone number', style: TextStyle(fontSize: 12, color: PsEvColors.mutedText)),
                       const SizedBox(height: 4),
-                      TextFormField(
-                        controller: _phoneCtrl,
-                        keyboardType: TextInputType.phone,
-                        validator: (v) => (v == null || v.trim().isEmpty) ? 'Enter your phone number' : null,
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Container(
+                            height: 48,
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                            decoration: BoxDecoration(
+                              border: Border.all(color: PsEvColors.slate200, width: 1.5),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: DropdownButtonHideUnderline(
+                              child: DropdownButton<String>(
+                                value: _countryCode,
+                                items: kCountryDialCodes
+                                    .map((c) => DropdownMenuItem(
+                                          value: c.code,
+                                          child: Text(c.code, style: const TextStyle(fontSize: 13)),
+                                        ))
+                                    .toList(),
+                                onChanged: (v) => setState(() => _countryCode = v!),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: TextFormField(
+                              controller: _phoneCtrl,
+                              keyboardType: TextInputType.phone,
+                              maxLength: 11,
+                              decoration: const InputDecoration(counterText: '', hintText: '01xxxxxxxxx'),
+                              validator: (v) {
+                                if (v == null || v.trim().isEmpty) return 'Enter your mobile number';
+                                if (!RegExp(r'^\d{11}$').hasMatch(v.trim())) return 'Must be exactly 11 digits';
+                                return null;
+                              },
+                            ),
+                          ),
+                        ],
                       ),
                       const SizedBox(height: 12),
                       const Text('Password', style: TextStyle(fontSize: 12, color: PsEvColors.mutedText)),
@@ -188,7 +223,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
 Future<bool> ensureRegistered(BuildContext context) async {
   final auth = context.read<AuthService>();
   if (auth.isRegistered) return true;
-
   final choice = await showModalBottomSheet<String>(
     context: context,
     shape: const RoundedRectangleBorder(
@@ -224,14 +258,11 @@ Future<bool> ensureRegistered(BuildContext context) async {
       ),
     ),
   );
-
   if (choice == null || !context.mounted) return false;
-
   if (choice == 'signin') {
     final result = await Navigator.push<bool>(context, MaterialPageRoute(builder: (_) => const SignInScreen()));
     return result == true;
   }
-
   final result = await Navigator.push<bool>(context, MaterialPageRoute(builder: (_) => const RegisterScreen()));
   return result == true;
 }

@@ -12,6 +12,7 @@ import '../../services/booking_service.dart';
 import '../../theme/ps_ev_theme.dart';
 import '../../theme/ps_ev_app_bar.dart';
 import '../auth/register_screen.dart';
+import '../host/host_home_screen.dart';
 import 'my_cars_screen.dart';
 import 'wallet_screen.dart';
 import 'booking_status_screen.dart';
@@ -468,10 +469,12 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
     );
   }
 
-  /// Footer navigation (previously these 4 shortcuts lived as icons in
-  /// the top AppBar). Order: Wallet, My Cars, Active Booking (Book a
-  /// Charge), then My Bookings last - styled differently (pill highlight)
-  /// since it's the primary/most-used shortcut.
+  /// Footer navigation. Order: Wallet, My Cars, My Stations (host access),
+  /// Active Booking (Book a Charge), then My Bookings last - styled
+  /// differently (pill highlight) since it's the primary/most-used
+  /// shortcut. "My Stations" replaces the old top-level Host tab so a
+  /// user doesn't need a separate role switch just to manage chargers
+  /// they host.
   Widget _buildFooterNav(BuildContext context, AppState app) {
     final hasActiveBooking = app.lastDriverBookingId != null;
 
@@ -479,11 +482,11 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
       top: false,
       child: Container(
         height: 72,
-                decoration: const BoxDecoration(
+        decoration: const BoxDecoration(
           color: Colors.white,
           border: Border(top: BorderSide(color: PsEvColors.slate200, width: 1)),
         ),
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
         child: Row(
           children: [
             _footerItem(
@@ -499,6 +502,15 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
               icon: Icons.electric_car,
               label: 'My Cars',
               onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const MyCarsScreen())),
+            ),
+            _footerItem(
+              icon: Icons.ev_station,
+              label: 'My Stations',
+              onTap: () async {
+                final ok = await ensureRegistered(context);
+                if (!ok || !context.mounted) return;
+                Navigator.push(context, MaterialPageRoute(builder: (_) => const HostHomeScreen()));
+              },
             ),
             _footerItem(
               icon: Icons.bolt,
@@ -526,9 +538,9 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(icon, size: 22, color: PsEvColors.mutedText),
+            Icon(icon, size: 20, color: PsEvColors.mutedText),
             const SizedBox(height: 4),
-            Text(label, style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: PsEvColors.mutedText)),
+            Text(label, style: const TextStyle(fontSize: 9, fontWeight: FontWeight.w600, color: PsEvColors.mutedText), textAlign: TextAlign.center),
           ],
         ),
       ),
@@ -547,18 +559,18 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Container(
-              width: 40,
-              height: 28,
+              width: 36,
+              height: 26,
               alignment: Alignment.center,
               decoration: BoxDecoration(
                 color: PsEvColors.emerald,
                 borderRadius: BorderRadius.circular(PsEvRadii.pill),
                 boxShadow: [BoxShadow(color: PsEvColors.emerald.withOpacity(0.35), blurRadius: 6, offset: const Offset(0, 2))],
               ),
-              child: Icon(icon, size: 18, color: Colors.white),
+              child: Icon(icon, size: 16, color: Colors.white),
             ),
             const SizedBox(height: 4),
-            Text(label, style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: PsEvColors.emerald)),
+            Text(label, style: const TextStyle(fontSize: 9, fontWeight: FontWeight.w800, color: PsEvColors.emerald), textAlign: TextAlign.center),
           ],
         ),
       ),

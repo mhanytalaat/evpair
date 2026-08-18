@@ -69,7 +69,7 @@ class _SignInScreenState extends State<SignInScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: const PsEvAppBar(title: 'Sign In'),
+      appBar: const PsEvAppBar(title: 'Sign In', showProfileAction: false),
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: Form(

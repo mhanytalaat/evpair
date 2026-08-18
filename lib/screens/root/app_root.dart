@@ -4,7 +4,6 @@ import '../../state/app_state.dart';
 import '../../services/auth_service.dart';
 import '../../theme/ps_ev_theme.dart';
 import '../driver/driver_home_screen.dart';
-import '../host/host_home_screen.dart';
 import '../admin/admin_home_screen.dart';
 
 class AppRoot extends StatelessWidget {
@@ -15,41 +14,49 @@ class AppRoot extends StatelessWidget {
     final app = context.watch<AppState>();
     final auth = context.watch<AuthService>();
 
-    // The Admin tab is only ever visible when signed in with the
+    // Host is no longer a top-level tab - it's reached via "My Stations" in
+    // the Driver footer nav instead (see DriverHomeScreen._buildFooterNav).
+    // The top switcher now only ever shows Driver, plus Admin for the
     // designated admin account (see AuthService.isAdmin / kAdminEmail).
-    // Every other signed-in user and every guest only sees Driver/Host.
+    final availableRoles = <AppRole>[
+      AppRole.driver,
+      if (auth.isAdmin) AppRole.admin,
+    ];
+
     final tabs = <Widget>[
       const DriverHomeScreen(),
-      const HostHomeScreen(),
       if (auth.isAdmin) const AdminHomeScreen(),
     ];
 
     final navItems = <_RoleNavItem>[
       const _RoleNavItem(icon: Icons.electric_car, label: 'Driver'),
-      const _RoleNavItem(icon: Icons.home, label: 'Host'),
       if (auth.isAdmin) const _RoleNavItem(icon: Icons.shield, label: 'Admin'),
     ];
 
-    // Guard against a stale Admin role index if the user signed out or
-    // switched accounts while sitting on the Admin tab.
-    var currentIndex = app.role.index;
-    if (currentIndex >= tabs.length) {
+    // Guard against a stale role index if the user signed out/switched
+    // accounts while sitting on a tab that's no longer available.
+    var currentIndex = availableRoles.indexOf(app.role);
+    if (currentIndex == -1) {
       currentIndex = 0;
       WidgetsBinding.instance.addPostFrameCallback((_) => app.setRole(AppRole.driver));
     }
 
     return Scaffold(
-      // The Driver / Host / Admin switcher now lives in a top header bar
-      // (previously a bottomNavigationBar) so it's the first thing the
-      // user sees and taps, instead of being tucked away at the bottom.
-      appBar: PreferredSize(
-        preferredSize: const Size.fromHeight(52),
-        child: _RoleHeaderBar(
-          currentIndex: currentIndex,
-          items: navItems,
-          onTap: (i) => app.setRole(AppRole.values[i]),
-        ),
-      ),
+      // The top header switcher only needs to appear when there's an
+      // actual choice to make (i.e. the signed-in user is Admin). For
+      // every regular user it's just the single Driver tab, so the header
+      // bar is omitted entirely to avoid showing a pointless single-item
+      // switcher.
+      appBar: tabs.length > 1
+          ? PreferredSize(
+              preferredSize: const Size.fromHeight(52),
+              child: _RoleHeaderBar(
+                currentIndex: currentIndex,
+                items: navItems,
+                onTap: (i) => app.setRole(availableRoles[i]),
+              ),
+            )
+          : null,
       body: IndexedStack(index: currentIndex, children: tabs),
     );
   }
@@ -77,7 +84,7 @@ class _RoleHeaderBar extends StatelessWidget implements PreferredSizeWidget {
       bottom: false,
       child: Container(
         height: 52,
-                decoration: const BoxDecoration(
+        decoration: const BoxDecoration(
           color: Colors.white,
           border: Border(bottom: BorderSide(color: PsEvColors.slate200, width: 1)),
         ),

@@ -8,6 +8,7 @@ import '../../models/availability_slot.dart';
 import '../../models/charger_profile.dart';
 import '../../models/enums.dart';
 import '../../services/booking_service.dart';
+import '../../state/app_state.dart';
 import '../../theme/ps_ev_theme.dart';
 import '../../theme/ps_ev_app_bar.dart';
 import '../auth/register_screen.dart';
@@ -17,6 +18,13 @@ import 'charger_form_screen.dart';
 /// booking requests, and an "Active Bookings" section (Booked vs
 /// Charging). Since drivers can now book CUSTOM sub-ranges within a free
 /// window, each window shows how many bookings currently fall within it.
+///
+/// IMPORTANT: every mutation to `ch.freeSlots` below is followed by a call
+/// to `AppState.updateCharger(ch)` so the change is actually persisted to
+/// Firestore. Without this, free windows only ever existed in memory and
+/// silently disappeared the next time chargers were reloaded from
+/// Firestore (e.g. after a sign-out/sign-in), and other users could never
+/// see a window a host had just added.
 class ManageChargerScreen extends StatefulWidget {
   final ChargerProfile charger;
   const ManageChargerScreen({super.key, required this.charger});
@@ -30,11 +38,9 @@ class _ManageChargerScreenState extends State<ManageChargerScreen> {
   Timer? _timer;
   bool _showAddSlotForm = false;
   bool _repeatWeekly = false;
-
   DateTime? _date;
   TimeOfDay? _start;
   TimeOfDay? _end;
-
   final Set<Weekday> _selectedWeekdays = {};
   DateTime? _repeatFrom;
   int _repeatWeeks = 4;
@@ -110,6 +116,11 @@ class _ManageChargerScreenState extends State<ManageChargerScreen> {
       ch.freeSlots.add(AvailabilitySlot(id: _uuid.v4(), chargerId: ch.chargerId, start: start, end: end));
       _resetForm();
     });
+    // Persist to Firestore - without this the new window is lost as soon
+    // as chargers are reloaded (e.g. sign-out/sign-in, or another user
+    // opening the app), because it only ever existed on this in-memory
+    // ChargerProfile instance.
+    context.read<AppState>().updateCharger(ch);
   }
 
   void _addRecurringSlots() {
@@ -126,7 +137,6 @@ class _ManageChargerScreenState extends State<ManageChargerScreen> {
       );
       return;
     }
-
     final newSlots = <AvailabilitySlot>[];
     final totalDays = _repeatWeeks * 7;
     for (int i = 0; i < totalDays; i++) {
@@ -144,18 +154,18 @@ class _ManageChargerScreenState extends State<ManageChargerScreen> {
         recurrenceLabel: 'Every ${weekdayEnum.shortLabel}',
       ));
     }
-
     if (newSlots.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('No matching dates found in the selected range.'), backgroundColor: PsEvColors.red),
       );
       return;
     }
-
     setState(() {
       ch.freeSlots.addAll(newSlots);
       _resetForm();
     });
+    // Persist the batch of recurring windows to Firestore - see note above.
+    context.read<AppState>().updateCharger(ch);
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('Added ${newSlots.length} recurring slot(s).'), backgroundColor: PsEvColors.emerald),
     );
@@ -191,12 +201,10 @@ class _ManageChargerScreenState extends State<ManageChargerScreen> {
     final pending = bookingService.pendingApprovalsForHost(ch.hostId).where((b) => b.chargerId == ch.chargerId).toList();
     final confirmed = bookingService.confirmedForHost(ch.hostId).where((b) => b.chargerId == ch.chargerId).toList();
     final inProgress = bookingService.inProgressForHost(ch.hostId).where((b) => b.chargerId == ch.chargerId).toList();
-
     int bookingsWithinWindow(AvailabilitySlot s) => bookingService
         .filterByCategory('ongoing')
         .where((b) => b.chargerId == ch.chargerId && !b.requestedStart.isBefore(s.start) && !b.requestedEnd.isAfter(s.end))
         .length;
-
     return Scaffold(
       appBar: PsEvAppBar(title: ch.label),
       body: ListView(
@@ -242,7 +250,6 @@ class _ManageChargerScreenState extends State<ManageChargerScreen> {
               ),
             ),
           ),
-
           if (confirmed.isNotEmpty || inProgress.isNotEmpty) ...[
             const Text('Active Bookings', style: TextStyle(fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
@@ -295,7 +302,6 @@ class _ManageChargerScreenState extends State<ManageChargerScreen> {
                 )),
             const SizedBox(height: 8),
           ],
-
           const Text('Free Charging Windows', style: TextStyle(fontWeight: FontWeight.bold)),
           const Padding(
             padding: EdgeInsets.only(top: 2, bottom: 6),
@@ -333,7 +339,13 @@ class _ManageChargerScreenState extends State<ManageChargerScreen> {
                                 : PsEvStatusPill.free(),
                             IconButton(
                               icon: const Icon(Icons.delete_outline, size: 18, color: PsEvColors.red),
-                              onPressed: () => setState(() => ch.freeSlots.remove(s)),
+                              onPressed: () {
+                                setState(() => ch.freeSlots.remove(s));
+                                // Persist the removal - without this the
+                                // deleted window would silently reappear
+                                // next time chargers reload from Firestore.
+                                context.read<AppState>().updateCharger(ch);
+                              },
                             ),
                           ],
                         ),
@@ -357,7 +369,6 @@ class _ManageChargerScreenState extends State<ManageChargerScreen> {
                             ),
                           ),
                           const SizedBox(height: 12),
-
                           if (!_repeatWeekly) ...[
                             PsEvFilledButton(icon: Icons.calendar_today, label: _date == null ? 'Pick date' : DateFormat('MMM d').format(_date!), onTap: _pickDate),
                             const SizedBox(height: 8),
@@ -387,7 +398,6 @@ class _ManageChargerScreenState extends State<ManageChargerScreen> {
                               ],
                             ),
                           ],
-
                           const SizedBox(height: 12),
                           Row(
                             children: [
@@ -413,7 +423,6 @@ class _ManageChargerScreenState extends State<ManageChargerScreen> {
               ),
             ),
           ),
-
           const SizedBox(height: 8),
           const Text('Booking Requests', style: TextStyle(fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
