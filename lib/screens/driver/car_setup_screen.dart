@@ -16,6 +16,7 @@ class CarSetupScreen extends StatefulWidget {
 
 class _CarSetupScreenState extends State<CarSetupScreen> {
   late TextEditingController _rangeCtrl;
+  late TextEditingController _plateCtrl;
   late double _ampere;
   late String _community;
 
@@ -36,12 +37,20 @@ class _CarSetupScreenState extends State<CarSetupScreen> {
     _model = (e != null && kCarBrandModels[_brand]!.contains(e.model)) ? e.model : kCarBrandModels[_brand]!.first;
 
     _rangeCtrl = TextEditingController(text: e?.rangeKm.toStringAsFixed(0) ?? '450');
+    _plateCtrl = TextEditingController(text: e?.plateNumber ?? '');
     _ampere = e?.maxAmpere ?? 32;
     _community = e?.community ?? kCommunityOptions.first;
 
     _chargingStandard = e?.chargingStandard ?? ChargingStandard.europeanCcs2;
     final validConnectors = _chargingStandard.compatibleConnectors;
     _connector = (e != null && validConnectors.contains(e.connector)) ? e.connector : validConnectors.first;
+  }
+
+  @override
+  void dispose() {
+    _rangeCtrl.dispose();
+    _plateCtrl.dispose();
+    super.dispose();
   }
 
   @override
@@ -80,7 +89,11 @@ class _CarSetupScreenState extends State<CarSetupScreen> {
                     items: modelsForBrand.map((m) => DropdownMenuItem(value: m, child: Text(m))).toList(),
                     onChanged: (v) => setState(() => _model = v!),
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 12),
+                  const Text('Car plate number', style: TextStyle(fontSize: 12, color: PsEvColors.mutedText)),
+                  const SizedBox(height: 4),
+                  TextField(controller: _plateCtrl, textCapitalization: TextCapitalization.characters, decoration: const InputDecoration(hintText: 'ABC-1234')),
+                  const Padding(padding: EdgeInsets.only(top: 4, bottom: 12), child: Text('Required for host arrival verification.', style: TextStyle(fontSize: 11, color: PsEvColors.emerald))),
 
                   const Text('Charging standard', style: TextStyle(fontSize: 12, color: PsEvColors.mutedText)),
                   const SizedBox(height: 4),
@@ -140,11 +153,17 @@ class _CarSetupScreenState extends State<CarSetupScreen> {
                   PsEvFilledButton(
                     label: isEditing ? 'Save Changes' : 'Save Car',
                     onTap: () {
+                      final plate = _plateCtrl.text.trim().toUpperCase();
+                      if (plate.isEmpty) {
+                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Please enter the car plate number.'), backgroundColor: PsEvColors.red));
+                        return;
+                      }
                       final car = CarProfile(
                         carId: widget.existing?.carId ?? 'car_${DateTime.now().millisecondsSinceEpoch}',
                         driverId: app.currentUserId ?? '',
                         brand: _brand,
                         model: _model,
+                        plateNumber: plate,
                         maxAmpere: _ampere,
                         rangeKm: double.tryParse(_rangeCtrl.text) ?? 450,
                         connector: _connector,

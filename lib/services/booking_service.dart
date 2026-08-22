@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
 import '../models/booking.dart';
 import '../models/charger_profile.dart';
+import '../models/car_profile.dart';
 import '../models/enums.dart';
 import 'wallet_service.dart';
 import 'pricing_service.dart';
@@ -126,7 +127,11 @@ class BookingService extends ChangeNotifier {
     required DateTime requestedStart,
     required DateTime requestedEnd,
     required String? driverCommunity,
+    required CarProfile driverCar,
   }) {
+    if (driverCar.plateNumber.trim().isEmpty) {
+      throw TimeRangeUnavailableException('Please add your car plate number in My Cars before booking.');
+    }
     if (!charger.isAccessibleToCommunity(driverCommunity)) {
       throw ChargerAccessDeniedException(
         'This charger is restricted to ${charger.restrictedCommunity} residents only.',
@@ -159,6 +164,12 @@ class BookingService extends ChangeNotifier {
       hostId: charger.hostId,
       chargerId: charger.chargerId,
       chargerName: charger.label,
+      carBrand: driverCar.brand,
+      carModel: driverCar.model,
+      carPlateNumber: driverCar.plateNumber.trim().toUpperCase(),
+      carConnector: driverCar.connector.label,
+      carChargingStandard: driverCar.chargingStandard.shortLabel,
+      carMaxAmpere: driverCar.maxAmpere,
       requestedStart: requestedStart,
       requestedEnd: requestedEnd,
       pricingModel: charger.pricingModel,

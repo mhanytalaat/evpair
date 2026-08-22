@@ -7,6 +7,12 @@ class Booking {
   final String hostId;
   final String chargerId;
   final String chargerName;
+  final String carBrand;
+  final String carModel;
+  final String carPlateNumber;
+  final String carConnector;
+  final String carChargingStandard;
+  final double carMaxAmpere;
 
   /// The driver's CUSTOM requested time range - can be any sub-range
   /// within a host's free window (e.g. a host window of 10:00 AM-10:00 PM
@@ -44,6 +50,12 @@ class Booking {
     required this.hostId,
     required this.chargerId,
     required this.chargerName,
+    required this.carBrand,
+    required this.carModel,
+    required this.carPlateNumber,
+    required this.carConnector,
+    required this.carChargingStandard,
+    required this.carMaxAmpere,
     required this.requestedStart,
     required this.requestedEnd,
     required this.pricingModel,
@@ -66,7 +78,7 @@ class Booking {
 
   Duration get reservedDuration => requestedEnd.difference(requestedStart);
 
-  String get googleMapsUrl {
+  String get mapsUrl {
     if (chargerMapLink != null && chargerMapLink!.trim().isNotEmpty) {
       return chargerMapLink!;
     }

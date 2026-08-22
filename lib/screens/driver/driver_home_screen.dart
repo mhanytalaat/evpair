@@ -469,12 +469,10 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
     );
   }
 
-  /// Footer navigation. Order: Wallet, My Cars, My Stations (host access),
-  /// Active Booking (Book a Charge), then My Bookings last - styled
-  /// differently (pill highlight) since it's the primary/most-used
-  /// shortcut. "My Stations" replaces the old top-level Host tab so a
-  /// user doesn't need a separate role switch just to manage chargers
-  /// they host.
+  /// Footer navigation. Order (per latest request): Book a Charge / Active
+  /// Booking, My Stations (host access), My Cars, My Bookings, then Wallet
+  /// last. My Bookings keeps the pill highlight since it remains the
+  /// primary/most-used shortcut even though it moved from the last slot.
   Widget _buildFooterNav(BuildContext context, AppState app) {
     final hasActiveBooking = app.lastDriverBookingId != null;
 
@@ -490,18 +488,11 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
         child: Row(
           children: [
             _footerItem(
-              icon: Icons.account_balance_wallet,
-              label: 'My Wallet',
-              onTap: () async {
-                final ok = await ensureRegistered(context);
-                if (!ok || !context.mounted) return;
-                Navigator.push(context, MaterialPageRoute(builder: (_) => const WalletScreen()));
-              },
-            ),
-            _footerItem(
-              icon: Icons.electric_car,
-              label: 'My Cars',
-              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const MyCarsScreen())),
+              icon: Icons.bolt,
+              label: hasActiveBooking ? 'Active Booking' : 'Book a Charge',
+              onTap: hasActiveBooking
+                  ? () => Navigator.push(context, MaterialPageRoute(builder: (_) => BookingStatusScreen(bookingId: app.lastDriverBookingId!)))
+                  : () => _scrollController.animateTo(0, duration: const Duration(milliseconds: 350), curve: Curves.easeOut),
             ),
             _footerItem(
               icon: Icons.ev_station,
@@ -513,16 +504,23 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
               },
             ),
             _footerItem(
-              icon: Icons.bolt,
-              label: hasActiveBooking ? 'Active Booking' : 'Book a Charge',
-              onTap: hasActiveBooking
-                  ? () => Navigator.push(context, MaterialPageRoute(builder: (_) => BookingStatusScreen(bookingId: app.lastDriverBookingId!)))
-                  : () => _scrollController.animateTo(0, duration: const Duration(milliseconds: 350), curve: Curves.easeOut),
+              icon: Icons.electric_car,
+              label: 'My Cars',
+              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const MyCarsScreen())),
             ),
             _footerItemHighlighted(
               icon: Icons.list_alt,
               label: 'My Bookings',
               onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const MyBookingsScreen())),
+            ),
+            _footerItem(
+              icon: Icons.account_balance_wallet,
+              label: 'My Wallet',
+              onTap: () async {
+                final ok = await ensureRegistered(context);
+                if (!ok || !context.mounted) return;
+                Navigator.push(context, MaterialPageRoute(builder: (_) => const WalletScreen()));
+              },
             ),
           ],
         ),
@@ -540,7 +538,7 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
           children: [
             Icon(icon, size: 20, color: PsEvColors.mutedText),
             const SizedBox(height: 4),
-            Text(label, style: const TextStyle(fontSize: 9, fontWeight: FontWeight.w600, color: PsEvColors.mutedText), textAlign: TextAlign.center),
+            Text(label, textAlign: TextAlign.center, style: const TextStyle(fontSize: 9, fontWeight: FontWeight.w600, color: PsEvColors.mutedText)),
           ],
         ),
       ),
@@ -570,7 +568,7 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
               child: Icon(icon, size: 16, color: Colors.white),
             ),
             const SizedBox(height: 4),
-            Text(label, style: const TextStyle(fontSize: 9, fontWeight: FontWeight.w800, color: PsEvColors.emerald), textAlign: TextAlign.center),
+            Text(label, textAlign: TextAlign.center, style: const TextStyle(fontSize: 9, fontWeight: FontWeight.w800, color: PsEvColors.emerald)),
           ],
         ),
       ),

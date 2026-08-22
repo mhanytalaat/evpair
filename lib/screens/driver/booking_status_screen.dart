@@ -1,8 +1,8 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:url_launcher/url_launcher.dart';
 import '../../services/booking_service.dart';
+import '../../services/map_launcher_service.dart';
 import '../../models/enums.dart';
 import '../../theme/ps_ev_theme.dart';
 import '../../theme/ps_ev_app_bar.dart';
@@ -67,16 +67,6 @@ class _BookingStatusScreenState extends State<BookingStatusScreen> {
     }
   }
 
-  Future<void> _openMaps(BuildContext context, String url) async {
-    final uri = Uri.tryParse(url);
-    if (uri == null || !await launchUrl(uri, mode: LaunchMode.externalApplication)) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Could not open the map location.'), backgroundColor: PsEvColors.red),
-        );
-      }
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -112,9 +102,14 @@ class _BookingStatusScreenState extends State<BookingStatusScreen> {
                     SizedBox(
                       width: 240,
                       child: OutlinedButton.icon(
-                        onPressed: () => _openMaps(context, booking.googleMapsUrl),
+                        onPressed: () => showMapAppChooser(
+                          context,
+                          latitude: booking.chargerLatitude,
+                          longitude: booking.chargerLongitude,
+                          label: booking.chargerName,
+                        ),
                         icon: const Icon(Icons.location_on, size: 18, color: PsEvColors.emerald),
-                        label: const Text('Open in Google Maps', style: TextStyle(color: PsEvColors.emerald, fontWeight: FontWeight.w700)),
+                        label: const Text('Choose Maps App', style: TextStyle(color: PsEvColors.emerald, fontWeight: FontWeight.w700)),
                       ),
                     ),
                   ],

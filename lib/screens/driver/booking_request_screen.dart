@@ -196,12 +196,17 @@ class _BookingRequestScreenState extends State<BookingRequestScreen> {
                               return;
                             }
                             try {
+                              final activeCar = app.car;
+                              if (activeCar == null) {
+                                throw TimeRangeUnavailableException('Please add and select a car in My Cars before booking.');
+                              }
                               final booking = bookingService.createRequest(
                                 driverId: app.currentUserId ?? '',
                                 charger: charger,
                                 requestedStart: range.start,
                                 requestedEnd: range.end,
-                                driverCommunity: app.car?.community,
+                                driverCommunity: activeCar.community,
+                                driverCar: activeCar,
                               );
                               app.setLastDriverBooking(booking.id);
                               Navigator.push(context, MaterialPageRoute(builder: (_) => BookingStatusScreen(bookingId: booking.id)));

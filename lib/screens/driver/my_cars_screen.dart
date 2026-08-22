@@ -71,6 +71,7 @@ class _MyCarsScreenState extends State<MyCarsScreen> {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(car.carModel, style: const TextStyle(fontWeight: FontWeight.bold)),
+                                Text('Plate: ${car.plateNumber.isEmpty ? 'Not added' : car.plateNumber}', style: const TextStyle(color: PsEvColors.emerald, fontSize: 12, fontWeight: FontWeight.w700)),
                                 Text(
                                   '${car.maxAmpere.toStringAsFixed(0)}A • ${car.connector.label} • ${car.chargingStandard.shortLabel}',
                                   style: const TextStyle(color: PsEvColors.mutedText, fontSize: 12),

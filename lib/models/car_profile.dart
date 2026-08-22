@@ -6,6 +6,7 @@ class CarProfile {
   final String driverId;
   final String brand;
   final String model;
+  final String plateNumber;
   final double maxAmpere;
   final double rangeKm;
   final ConnectorType connector;
@@ -17,6 +18,7 @@ class CarProfile {
     required this.driverId,
     required this.brand,
     required this.model,
+    required this.plateNumber,
     required this.maxAmpere,
     required this.rangeKm,
     required this.connector,
@@ -41,6 +43,7 @@ class CarProfile {
       'driverId': driverId,
       'brand': brand,
       'model': model,
+      'plateNumber': plateNumber,
       'maxAmpere': maxAmpere,
       'rangeKm': rangeKm,
       'connector': connector.name,
@@ -56,6 +59,7 @@ class CarProfile {
       driverId: data['driverId'] as String,
       brand: data['brand'] as String,
       model: data['model'] as String,
+      plateNumber: data['plateNumber'] as String? ?? '',
       maxAmpere: (data['maxAmpere'] as num).toDouble(),
       rangeKm: (data['rangeKm'] as num).toDouble(),
       connector: ConnectorType.values.byName(data['connector'] as String),

@@ -77,12 +77,34 @@ class _ChargerFormScreenState extends State<ChargerFormScreen> {
   }
 
   Future<void> _pickPhoto() async {
+    final source = await showModalBottomSheet<ImageSource>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.camera_alt_outlined),
+              title: const Text('Take a Photo'),
+              onTap: () => Navigator.pop(sheetContext, ImageSource.camera),
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library_outlined),
+              title: const Text('Choose from Gallery'),
+              onTap: () => Navigator.pop(sheetContext, ImageSource.gallery),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (source == null) return;
+
     try {
-      final picker = ImagePicker();
-      final file = await picker.pickImage(source: ImageSource.gallery, imageQuality: 80);
+      final file = await ImagePicker().pickImage(source: source, imageQuality: 80);
       if (file == null) return;
       final bytes = await file.readAsBytes();
-      setState(() => _photoBytes = bytes);
+      if (mounted) setState(() => _photoBytes = bytes);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -228,7 +250,7 @@ class _ChargerFormScreenState extends State<ChargerFormScreen> {
                         color: PsEvColors.slate100.withOpacity(0.5),
                       ),
                       child: Text(
-                        _photoBytes == null ? '📷 Tap to upload a photo of your charging station' : '📷 Change photo',
+                        _photoBytes == null ? '📷 Add station photo (Camera or Gallery)' : '📷 Change photo (Camera or Gallery)',
                         textAlign: TextAlign.center,
                       ),
                     ),
@@ -263,14 +285,14 @@ class _ChargerFormScreenState extends State<ChargerFormScreen> {
                   const Padding(
                     padding: EdgeInsets.only(top: 4, bottom: 8),
                     child: Text(
-                      'City and Area are used for filtering/search. Without an exact Google Maps link, your '
+                      'City and Area are used for filtering/search. Without an exact Maps link, your '
                       'charger will be placed near the Area\'s center (spread out from other chargers in the '
-                      'same area). For a precise pin at your exact address, paste a Google Maps link below.',
+                      'same area). For a precise pin at your exact address, paste a Maps link below.',
                       style: TextStyle(fontSize: 11, color: PsEvColors.mutedText),
                     ),
                   ),
 
-                  const Text('Google Maps link', style: TextStyle(fontSize: 12, color: PsEvColors.mutedText)),
+                  const Text('Maps link', style: TextStyle(fontSize: 12, color: PsEvColors.mutedText)),
                   const SizedBox(height: 4),
                   TextField(controller: _mapLinkCtrl, decoration: const InputDecoration(hintText: 'https://maps.google.com/?q=30.0131,31.4326')),
                   const SizedBox(height: 16),

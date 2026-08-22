@@ -1,13 +1,15 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
-import 'package:url_launcher/url_launcher.dart';
 import '../../models/availability_slot.dart';
 import '../../models/charger_profile.dart';
 import '../../models/enums.dart';
+import '../../models/booking.dart';
 import '../../services/booking_service.dart';
+import '../../services/map_launcher_service.dart';
 import '../../state/app_state.dart';
 import '../../theme/ps_ev_theme.dart';
 import '../../theme/ps_ev_app_bar.dart';
@@ -230,16 +232,18 @@ class _ManageChargerScreenState extends State<ManageChargerScreen> {
                     Padding(
                       padding: const EdgeInsets.only(top: 6),
                       child: InkWell(
-                        onTap: () async {
-                          final uri = Uri.tryParse(ch.mapLink!);
-                          if (uri != null) await launchUrl(uri, mode: LaunchMode.externalApplication);
-                        },
+                        onTap: () => showMapAppChooser(
+                          context,
+                          latitude: ch.latitude,
+                          longitude: ch.longitude,
+                          label: ch.label,
+                        ),
                         child: const Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             Icon(Icons.location_on, size: 14, color: PsEvColors.emerald),
                             SizedBox(width: 4),
-                            Text('Open in Google Maps', style: TextStyle(color: PsEvColors.emerald, fontSize: 12)),
+                            Text('Choose Maps App', style: TextStyle(color: PsEvColors.emerald, fontSize: 12)),
                           ],
                         ),
                       ),
@@ -263,7 +267,7 @@ class _ManageChargerScreenState extends State<ManageChargerScreen> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text('Driver: ${b.driverId}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                              _DriverAndCarInfo(booking: b),
                               Text('${dateFmt.format(b.requestedStart)} – ${DateFormat('h:mm a').format(b.requestedEnd)}', style: const TextStyle(color: PsEvColors.mutedText, fontSize: 11)),
                             ],
                           ),
@@ -283,7 +287,7 @@ class _ManageChargerScreenState extends State<ManageChargerScreen> {
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
                             Expanded(
-                              child: Text('Driver: ${b.driverId}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                              child: _DriverAndCarInfo(booking: b),
                             ),
                             PsEvStatusPill.charging(),
                           ],
@@ -438,7 +442,7 @@ class _ManageChargerScreenState extends State<ManageChargerScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text('Driver: ${b.driverId}', style: const TextStyle(fontWeight: FontWeight.bold)),
+                        _DriverAndCarInfo(booking: b),
                         Text('${dateFmt.format(b.requestedStart)} – ${DateFormat('h:mm a').format(b.requestedEnd)}', style: const TextStyle(color: PsEvColors.mutedText, fontSize: 12)),
                         Text('Held: ${b.heldAmount.toStringAsFixed(0)} EGP ✓', style: const TextStyle(fontSize: 12, color: PsEvColors.emerald)),
                         const SizedBox(height: 8),
@@ -471,6 +475,36 @@ class _ManageChargerScreenState extends State<ManageChargerScreen> {
         alignment: Alignment.center,
         child: Text(label, style: TextStyle(color: active ? Colors.white : PsEvColors.slateText, fontWeight: FontWeight.w600, fontSize: 12)),
       ),
+    );
+  }
+}
+
+
+class _DriverAndCarInfo extends StatelessWidget {
+  final Booking booking;
+  const _DriverAndCarInfo({required this.booking});
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+      future: FirebaseFirestore.instance.collection('users').doc(booking.driverId).get(),
+      builder: (context, snapshot) {
+        var name = 'Driver'; String? phone;
+        if (snapshot.hasData && snapshot.data!.exists) {
+          final data = snapshot.data!.data();
+          final first = data?['firstName'] as String? ?? '';
+          final last = data?['lastName'] as String? ?? '';
+          final fullName = [first, last].where((v) => v.trim().isNotEmpty).join(' ');
+          if (fullName.isNotEmpty) name = fullName;
+          phone = data?['phone'] as String?;
+        }
+        return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('Driver: $name', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+          if (phone != null && phone!.trim().isNotEmpty) Text('Mobile: $phone', style: const TextStyle(color: PsEvColors.mutedText, fontSize: 11)),
+          Text('Car: ${booking.carBrand} ${booking.carModel}', style: const TextStyle(color: PsEvColors.slateText, fontSize: 12, fontWeight: FontWeight.w600)),
+          Text('Plate: ${booking.carPlateNumber}', style: const TextStyle(color: PsEvColors.emerald, fontSize: 12, fontWeight: FontWeight.w800)),
+          Text('${booking.carChargingStandard} • ${booking.carConnector} • ${booking.carMaxAmpere.toStringAsFixed(0)}A', style: const TextStyle(color: PsEvColors.mutedText, fontSize: 11)),
+        ]);
+      },
     );
   }
 }
