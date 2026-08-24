@@ -5,6 +5,7 @@ import '../../models/car_profile.dart';
 import '../../models/enums.dart';
 import '../../theme/ps_ev_theme.dart';
 import '../../theme/ps_ev_app_bar.dart';
+import '../../utils/plate_number_validator.dart';
 
 class CarSetupScreen extends StatefulWidget {
   final CarProfile? existing;
@@ -15,14 +16,13 @@ class CarSetupScreen extends StatefulWidget {
 }
 
 class _CarSetupScreenState extends State<CarSetupScreen> {
+  final _formKey = GlobalKey<FormState>();
   late TextEditingController _rangeCtrl;
   late TextEditingController _plateCtrl;
   late double _ampere;
   late String _community;
-
   late String _brand;
   late String _model;
-
   late ChargingStandard _chargingStandard;
   late ConnectorType _connector;
 
@@ -32,15 +32,12 @@ class _CarSetupScreenState extends State<CarSetupScreen> {
   void initState() {
     super.initState();
     final e = widget.existing;
-
     _brand = (e != null && kCarBrandModels.containsKey(e.brand)) ? e.brand : kCarBrandModels.keys.first;
     _model = (e != null && kCarBrandModels[_brand]!.contains(e.model)) ? e.model : kCarBrandModels[_brand]!.first;
-
     _rangeCtrl = TextEditingController(text: e?.rangeKm.toStringAsFixed(0) ?? '450');
     _plateCtrl = TextEditingController(text: e?.plateNumber ?? '');
     _ampere = e?.maxAmpere ?? 32;
     _community = e?.community ?? kCommunityOptions.first;
-
     _chargingStandard = e?.chargingStandard ?? ChargingStandard.europeanCcs2;
     final validConnectors = _chargingStandard.compatibleConnectors;
     _connector = (e != null && validConnectors.contains(e.connector)) ? e.connector : validConnectors.first;
@@ -53,136 +50,154 @@ class _CarSetupScreenState extends State<CarSetupScreen> {
     super.dispose();
   }
 
+  void _submit() {
+    // Validate the whole form first (this now includes the plate number
+    // field's digits-then-letters check via PlateNumberValidator, which
+    // accepts any of Egypt's three regional shapes: 3 digits+3 letters
+    // (Cairo), 4 digits+2 letters (Giza), or 4 digits+3 letters (other
+    // governorates)), so a malformed plate is caught with an inline error
+    // message instead of silently being saved and only surfacing later
+    // as a confusing failure at booking time in BookingService.createRequest.
+    if (!_formKey.currentState!.validate()) return;
+
+    final app = context.read<AppState>();
+    final plate = PlateNumberValidator.normalize(_plateCtrl.text);
+
+    final car = CarProfile(
+      carId: widget.existing?.carId ?? 'car_${DateTime.now().millisecondsSinceEpoch}',
+      driverId: app.currentUserId ?? '',
+      brand: _brand,
+      model: _model,
+      plateNumber: plate,
+      maxAmpere: _ampere,
+      rangeKm: double.tryParse(_rangeCtrl.text) ?? 450,
+      connector: _connector,
+      chargingStandard: _chargingStandard,
+      community: _community,
+    );
+    if (isEditing) {
+      app.updateCar(car);
+    } else {
+      app.addCar(car);
+    }
+    Navigator.pop(context);
+  }
+
   @override
   Widget build(BuildContext context) {
-    final app = context.read<AppState>();
     final modelsForBrand = kCarBrandModels[_brand]!;
     final connectorsForStandard = _chargingStandard.compatibleConnectors;
-
     return Scaffold(
       appBar: PsEvAppBar(title: isEditing ? 'Edit Car' : 'Add Car'),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text('Car brand', style: TextStyle(fontSize: 12, color: PsEvColors.mutedText)),
-                  const SizedBox(height: 4),
-                  DropdownButtonFormField<String>(
-                    value: _brand,
-                    items: kCarBrandModels.keys.map((b) => DropdownMenuItem(value: b, child: Text(b))).toList(),
-                    onChanged: (v) => setState(() {
-                      _brand = v!;
-                      _model = kCarBrandModels[_brand]!.first;
-                    }),
-                  ),
-                  const SizedBox(height: 12),
-
-                  const Text('Car model', style: TextStyle(fontSize: 12, color: PsEvColors.mutedText)),
-                  const SizedBox(height: 4),
-                  DropdownButtonFormField<String>(
-                    value: _model,
-                    items: modelsForBrand.map((m) => DropdownMenuItem(value: m, child: Text(m))).toList(),
-                    onChanged: (v) => setState(() => _model = v!),
-                  ),
-                  const SizedBox(height: 12),
-                  const Text('Car plate number', style: TextStyle(fontSize: 12, color: PsEvColors.mutedText)),
-                  const SizedBox(height: 4),
-                  TextField(controller: _plateCtrl, textCapitalization: TextCapitalization.characters, decoration: const InputDecoration(hintText: 'ABC-1234')),
-                  const Padding(padding: EdgeInsets.only(top: 4, bottom: 12), child: Text('Required for host arrival verification.', style: TextStyle(fontSize: 11, color: PsEvColors.emerald))),
-
-                  const Text('Charging standard', style: TextStyle(fontSize: 12, color: PsEvColors.mutedText)),
-                  const SizedBox(height: 4),
-                  DropdownButtonFormField<ChargingStandard>(
-                    value: _chargingStandard,
-                    items: ChargingStandard.values.map((s) => DropdownMenuItem(value: s, child: Text(s.label))).toList(),
-                    onChanged: (v) => setState(() {
-                      _chargingStandard = v!;
-                      _connector = _chargingStandard.compatibleConnectors.first;
-                    }),
-                  ),
-                  const Padding(
-                    padding: EdgeInsets.only(top: 6, bottom: 12),
-                    child: Text(
-                      'Chinese-market/imported EVs (e.g. Arcfox, many BYD imports) use GB/T. '
-                      'European-market EVs (e.g. VW, most Geely-for-Europe models) use CCS2/Type 2.',
-                      style: TextStyle(fontSize: 11, color: PsEvColors.mutedText),
+      body: Form(
+        key: _formKey,
+        child: ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('Car brand', style: TextStyle(fontSize: 12, color: PsEvColors.mutedText)),
+                    const SizedBox(height: 4),
+                    DropdownButtonFormField<String>(
+                      value: _brand,
+                      items: kCarBrandModels.keys.map((b) => DropdownMenuItem(value: b, child: Text(b))).toList(),
+                      onChanged: (v) => setState(() {
+                        _brand = v!;
+                        _model = kCarBrandModels[_brand]!.first;
+                      }),
                     ),
-                  ),
-
-                  const Text('Connector type', style: TextStyle(fontSize: 12, color: PsEvColors.mutedText)),
-                  const SizedBox(height: 4),
-                  DropdownButtonFormField<ConnectorType>(
-                    value: _connector,
-                    items: connectorsForStandard.map((c) => DropdownMenuItem(value: c, child: Text(c.label))).toList(),
-                    onChanged: (v) => setState(() => _connector = v!),
-                  ),
-                  const SizedBox(height: 12),
-
-                  const Text('Max ampere (A)', style: TextStyle(fontSize: 12, color: PsEvColors.mutedText)),
-                  const SizedBox(height: 4),
-                  DropdownButtonFormField<double>(
-                    value: _ampere,
-                    items: kAmpereOptions.map((a) => DropdownMenuItem(value: a, child: Text('${a.toStringAsFixed(0)} A'))).toList(),
-                    onChanged: (v) => setState(() => _ampere = v!),
-                  ),
-                  const SizedBox(height: 12),
-
-                  const Text('Full-charge range (km)', style: TextStyle(fontSize: 12, color: PsEvColors.mutedText)),
-                  const SizedBox(height: 4),
-                  TextField(controller: _rangeCtrl, keyboardType: TextInputType.number),
-                  const SizedBox(height: 12),
-
-                  const Text('My compound / community', style: TextStyle(fontSize: 12, color: PsEvColors.mutedText)),
-                  const SizedBox(height: 4),
-                  DropdownButtonFormField<String>(
-                    value: _community,
-                    items: kCommunityOptions.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
-                    onChanged: (v) => setState(() => _community = v!),
-                  ),
-                  const Padding(
-                    padding: EdgeInsets.only(top: 6),
-                    child: Text('Used to unlock residents-only chargers in your compound.', style: TextStyle(fontSize: 11, color: PsEvColors.emerald)),
-                  ),
-                  const SizedBox(height: 12),
-
-                  PsEvFilledButton(
-                    label: isEditing ? 'Save Changes' : 'Save Car',
-                    onTap: () {
-                      final plate = _plateCtrl.text.trim().toUpperCase();
-                      if (plate.isEmpty) {
-                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Please enter the car plate number.'), backgroundColor: PsEvColors.red));
-                        return;
-                      }
-                      final car = CarProfile(
-                        carId: widget.existing?.carId ?? 'car_${DateTime.now().millisecondsSinceEpoch}',
-                        driverId: app.currentUserId ?? '',
-                        brand: _brand,
-                        model: _model,
-                        plateNumber: plate,
-                        maxAmpere: _ampere,
-                        rangeKm: double.tryParse(_rangeCtrl.text) ?? 450,
-                        connector: _connector,
-                        chargingStandard: _chargingStandard,
-                        community: _community,
-                      );
-                      if (isEditing) {
-                        app.updateCar(car);
-                      } else {
-                        app.addCar(car);
-                      }
-                      Navigator.pop(context);
-                    },
-                  ),
-                ],
+                    const SizedBox(height: 12),
+                    const Text('Car model', style: TextStyle(fontSize: 12, color: PsEvColors.mutedText)),
+                    const SizedBox(height: 4),
+                    DropdownButtonFormField<String>(
+                      value: _model,
+                      items: modelsForBrand.map((m) => DropdownMenuItem(value: m, child: Text(m))).toList(),
+                      onChanged: (v) => setState(() => _model = v!),
+                    ),
+                    const SizedBox(height: 12),
+                    const Text('Car plate number', style: TextStyle(fontSize: 12, color: PsEvColors.mutedText)),
+                    const SizedBox(height: 4),
+                    TextFormField(
+                      controller: _plateCtrl,
+                      textCapitalization: TextCapitalization.characters,
+                      decoration: const InputDecoration(hintText: '123-ABC or 1234-AB'),
+                      // Egyptian plates: digits first, then letters.
+                      // Cairo: 3 digits+3 letters. Giza: 4 digits+2
+                      // letters. Other governorates: 4 digits+3 letters.
+                      validator: PlateNumberValidator.validate,
+                    ),
+                    const Padding(
+                      padding: EdgeInsets.only(top: 4, bottom: 12),
+                      child: Text(
+                        'Format: digits then letters - e.g. 123-ABC (Cairo, 3+3), 1234-AB (Giza, 4+2), '
+                        'or 1234-ABC (other governorates, 4+3). Required for host arrival verification.',
+                        style: TextStyle(fontSize: 11, color: PsEvColors.emerald),
+                      ),
+                    ),
+                    const Text('Charging standard', style: TextStyle(fontSize: 12, color: PsEvColors.mutedText)),
+                    const SizedBox(height: 4),
+                    DropdownButtonFormField<ChargingStandard>(
+                      value: _chargingStandard,
+                      items: ChargingStandard.values.map((s) => DropdownMenuItem(value: s, child: Text(s.label))).toList(),
+                      onChanged: (v) => setState(() {
+                        _chargingStandard = v!;
+                        _connector = _chargingStandard.compatibleConnectors.first;
+                      }),
+                    ),
+                    const Padding(
+                      padding: EdgeInsets.only(top: 6, bottom: 12),
+                      child: Text(
+                        'Chinese-market/imported EVs (e.g. Arcfox, many BYD imports) use GB/T. '
+                        'European-market EVs (e.g. VW, most Geely-for-Europe models) use CCS2/Type 2.',
+                        style: TextStyle(fontSize: 11, color: PsEvColors.mutedText),
+                      ),
+                    ),
+                    const Text('Connector type', style: TextStyle(fontSize: 12, color: PsEvColors.mutedText)),
+                    const SizedBox(height: 4),
+                    DropdownButtonFormField<ConnectorType>(
+                      value: _connector,
+                      items: connectorsForStandard.map((c) => DropdownMenuItem(value: c, child: Text(c.label))).toList(),
+                      onChanged: (v) => setState(() => _connector = v!),
+                    ),
+                    const SizedBox(height: 12),
+                    const Text('Max ampere (A)', style: TextStyle(fontSize: 12, color: PsEvColors.mutedText)),
+                    const SizedBox(height: 4),
+                    DropdownButtonFormField<double>(
+                      value: _ampere,
+                      items: kAmpereOptions.map((a) => DropdownMenuItem(value: a, child: Text('${a.toStringAsFixed(0)} A'))).toList(),
+                      onChanged: (v) => setState(() => _ampere = v!),
+                    ),
+                    const SizedBox(height: 12),
+                    const Text('Full-charge range (km)', style: TextStyle(fontSize: 12, color: PsEvColors.mutedText)),
+                    const SizedBox(height: 4),
+                    TextField(controller: _rangeCtrl, keyboardType: TextInputType.number),
+                    const SizedBox(height: 12),
+                    const Text('My compound / community', style: TextStyle(fontSize: 12, color: PsEvColors.mutedText)),
+                    const SizedBox(height: 4),
+                    DropdownButtonFormField<String>(
+                      value: _community,
+                      items: kCommunityOptions.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
+                      onChanged: (v) => setState(() => _community = v!),
+                    ),
+                    const Padding(
+                      padding: EdgeInsets.only(top: 6),
+                      child: Text('Used to unlock residents-only chargers in your compound.', style: TextStyle(fontSize: 11, color: PsEvColors.emerald)),
+                    ),
+                    const SizedBox(height: 12),
+                    PsEvFilledButton(
+                      label: isEditing ? 'Save Changes' : 'Save Car',
+                      onTap: _submit,
+                    ),
+                  ],
+                ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

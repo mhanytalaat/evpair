@@ -223,6 +223,91 @@ class WalletService extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Charges a driver an overstay penalty (see Booking.completeAndSettle /
+  /// kOverstayGraceMinutes / kOverstayPenaltyPerMinute) for leaving a car
+  /// parked/plugged in past the booked end time. Unlike holdForBooking,
+  /// this is not gated on the driver having enough balance - the balance
+  /// is simply allowed to go negative, representing an amount owed. A
+  /// majority share is passed to the host as compensation for the station
+  /// being blocked past the reserved window, similar to settleBooking's
+  /// commission split.
+  void chargeOverstayPenalty({
+    required String driverId,
+    required String hostId,
+    required String bookingId,
+    required double penaltyAmount,
+    required int overstayMinutes,
+    double hostShareRate = 0.80,
+  }) {
+    if (penaltyAmount <= 0) return;
+
+    final driverEntry = WalletLedgerEntry(
+      id: _uuid.v4(),
+      userId: driverId,
+      amount: -penaltyAmount,
+      reason: 'Overstay penalty for booking $bookingId ($overstayMinutes min past grace period)',
+    );
+    _balances[driverId] = balanceOf(driverId) - penaltyAmount;
+    _ledger.add(driverEntry);
+    _persistBalance(driverId);
+    _persistLedgerEntry(driverEntry);
+
+    final hostShare = (penaltyAmount * hostShareRate).roundToDouble();
+    final hostEntry = WalletLedgerEntry(
+      id: _uuid.v4(),
+      userId: hostId,
+      amount: hostShare,
+      reason: 'Overstay compensation for booking $bookingId ($overstayMinutes min past grace period)',
+    );
+    _balances[hostId] = balanceOf(hostId) + hostShare;
+    _ledger.add(hostEntry);
+    _persistBalance(hostId);
+    _persistLedgerEntry(hostEntry);
+
+    notifyListeners();
+  }
+
+  /// Direct charge for BUYING an equipment item (cable/adaptor/home
+  /// station) from the equipment marketplace - see PartnerService. Unlike
+  /// holdForBooking this is not a temporary hold, it's an immediate
+  /// purchase charge; the full amount goes to whoever listed the item
+  /// (a partner, or kPlatformOwnerId for EVPair-owned stock). Like the
+  /// overstay penalty, the driver's balance is allowed to go negative
+  /// rather than silently failing, since this mirrors a real purchase
+  /// obligation.
+  void payForEquipment({
+    required String driverId,
+    required String ownerId,
+    required String requestId,
+    required double amount,
+  }) {
+    if (amount <= 0) return;
+
+    final driverEntry = WalletLedgerEntry(
+      id: _uuid.v4(),
+      userId: driverId,
+      amount: -amount,
+      reason: 'Equipment purchase (request $requestId)',
+    );
+    _balances[driverId] = balanceOf(driverId) - amount;
+    _ledger.add(driverEntry);
+    _persistBalance(driverId);
+    _persistLedgerEntry(driverEntry);
+
+    final ownerEntry = WalletLedgerEntry(
+      id: _uuid.v4(),
+      userId: ownerId,
+      amount: amount,
+      reason: 'Equipment sale (request $requestId)',
+    );
+    _balances[ownerId] = balanceOf(ownerId) + amount;
+    _ledger.add(ownerEntry);
+    _persistBalance(ownerId);
+    _persistLedgerEntry(ownerEntry);
+
+    notifyListeners();
+  }
+
   // ---------------------------------------------------------------------
   // Firestore write helpers. These are intentionally fire-and-forget
   // (not awaited by the mutation methods above) so none of the existing

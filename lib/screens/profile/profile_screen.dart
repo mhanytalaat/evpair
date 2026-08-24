@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../services/auth_service.dart';
+import '../../services/partner_service.dart';
 import '../../state/app_state.dart';
-import '../../state/country_codes.dart';
 import '../../theme/ps_ev_theme.dart';
 import '../auth/register_screen.dart';
 import '../driver/my_cars_screen.dart';
@@ -10,57 +10,21 @@ import '../driver/wallet_screen.dart';
 import '../driver/my_bookings_screen.dart';
 import '../host/host_home_screen.dart';
 import '../root/app_root.dart';
+import '../legal/legal_document_screen.dart';
+import '../partner/home_installation_screen.dart';
+import '../partner/partner_jobs_screen.dart';
+import 'account_settings_screen.dart';
 
-class ProfileScreen extends StatefulWidget {
+/// Profile / account hub. Cars, Stations, Wallet, and Booking History
+/// are surfaced here as "Manage" rows since they're occasional-use
+/// actions, not everyday destinations that deserve footer space.
+/// Account Settings and Legal are listed the same way for a single
+/// consistent list-row pattern throughout this screen - nothing is
+/// shown as an inline form directly on this page anymore.
+class ProfileScreen extends StatelessWidget {
   const ProfileScreen({super.key});
 
-  @override
-  State<ProfileScreen> createState() => _ProfileScreenState();
-}
-
-class _ProfileScreenState extends State<ProfileScreen> {
-  final _formKey = GlobalKey<FormState>();
-  late final TextEditingController _firstNameCtrl;
-  late final TextEditingController _lastNameCtrl;
-  late final TextEditingController _phoneCtrl;
-  bool _saving = false;
-
-  // Country dial code for the phone number. If the stored phone already
-  // starts with a known dial code, split it off so the dropdown and the
-  // digits field show correctly; otherwise default to Egypt.
-  String _countryCode = '+20';
-
-  @override
-  void initState() {
-    super.initState();
-    final auth = context.read<AuthService>();
-    _firstNameCtrl = TextEditingController(text: auth.firstName ?? '');
-    _lastNameCtrl = TextEditingController(text: auth.lastName ?? '');
-
-    final storedPhone = auth.phone ?? '';
-    final matched = kCountryDialCodes
-        .where((c) => storedPhone.startsWith(c.code))
-        .fold<CountryDialCode?>(null, (best, c) {
-      if (best == null || c.code.length > best.code.length) return c;
-      return best;
-    });
-    if (matched != null) {
-      _countryCode = matched.code;
-      _phoneCtrl = TextEditingController(text: storedPhone.substring(matched.code.length));
-    } else {
-      _phoneCtrl = TextEditingController(text: storedPhone);
-    }
-  }
-
-  @override
-  void dispose() {
-    _firstNameCtrl.dispose();
-    _lastNameCtrl.dispose();
-    _phoneCtrl.dispose();
-    super.dispose();
-  }
-
-  Future<void> _signOut() async {
+  Future<void> _signOut(BuildContext context) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -75,39 +39,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
     if (confirmed != true) return;
 
     await context.read<AuthService>().signOut();
-    if (!mounted) return;
+    if (!context.mounted) return;
     await context.read<AppState>().clearCurrentUserAndData();
-    if (!mounted) return;
+    if (!context.mounted) return;
     Navigator.of(context).pushAndRemoveUntil(
       MaterialPageRoute(builder: (_) => const AppRoot()),
       (route) => false,
     );
   }
 
-  Future<void> _save() async {
-    if (!_formKey.currentState!.validate()) return;
-    setState(() => _saving = true);
-    await context.read<AuthService>().updateProfile(
-          firstName: _firstNameCtrl.text,
-          lastName: _lastNameCtrl.text,
-          phone: '$_countryCode${_phoneCtrl.text.trim()}',
-        );
-    if (!mounted) return;
-    setState(() => _saving = false);
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Profile saved to Firestore')),
-    );
-  }
-
-  Future<void> _openStations() async {
-    final ok = await ensureRegistered(context);
-    if (!ok || !mounted) return;
-    Navigator.push(context, MaterialPageRoute(builder: (_) => const HostHomeScreen()));
-  }
-
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthService>();
+    final partnerService = context.watch<PartnerService>();
     return Scaffold(
       appBar: AppBar(
         title: const Text('My Profile'),
@@ -145,6 +89,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       auth.email!,
                       style: const TextStyle(fontSize: 12, color: PsEvColors.mutedText),
                     ),
+                  if (partnerService.isPartner)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 6),
+                      child: PsEvTag(label: 'Installation Partner'),
+                    ),
                 ],
               ),
             ),
@@ -152,15 +101,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
           const SizedBox(height: 12),
 
-          // -----------------------------------------------------------
-          // Manage section: Cars and Stations now live here instead of
-          // the home-screen footer, since they're setup-once actions
-          // rather than everyday destinations. Wallet & Top-Up and
-          // Booking History are also listed here for a single place to
-          // find every account-related action, even though Wallet and
-          // Sessions/Bookings also have quick-access icons on the home
-          // screen's floating footer.
-          // -----------------------------------------------------------
           const Padding(
             padding: EdgeInsets.only(left: 4, bottom: 8),
             child: Text('Manage', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: PsEvColors.mutedText)),
@@ -168,7 +108,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           Card(
             child: Column(
               children: [
-                _manageRow(
+                _ProfileRow(
                   icon: Icons.electric_car,
                   iconColor: PsEvColors.emerald,
                   title: 'My Cars',
@@ -176,15 +116,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const MyCarsScreen())),
                 ),
                 const Divider(height: 1),
-                _manageRow(
+                _ProfileRow(
                   icon: Icons.ev_station,
                   iconColor: PsEvColors.blue,
                   title: 'My Stations',
                   subtitle: 'Host or manage your charging stations',
-                  onTap: _openStations,
+                  onTap: () async {
+                    final ok = await ensureRegistered(context);
+                    if (!ok || !context.mounted) return;
+                    Navigator.push(context, MaterialPageRoute(builder: (_) => const HostHomeScreen()));
+                  },
                 ),
                 const Divider(height: 1),
-                _manageRow(
+                _ProfileRow(
                   icon: Icons.account_balance_wallet_outlined,
                   iconColor: PsEvColors.amber,
                   title: 'Wallet & Top-Up',
@@ -192,136 +136,138 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const WalletScreen())),
                 ),
                 const Divider(height: 1),
-                _manageRow(
+                _ProfileRow(
                   icon: Icons.list_alt,
                   iconColor: PsEvColors.slateText,
                   title: 'Booking History',
                   subtitle: 'Your past and ongoing bookings',
                   onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const MyBookingsScreen())),
+                ),
+                const Divider(height: 1),
+                _ProfileRow(
+                  icon: Icons.home_work_outlined,
+                  iconColor: PsEvColors.blue,
+                  title: 'Home Installation & Equipment',
+                  subtitle: 'Request a home install, or borrow/buy cables & adaptors',
+                  onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const HomeInstallationScreen())),
                   isLast: true,
                 ),
               ],
             ),
           ),
 
+          // -----------------------------------------------------------
+          // Partner Jobs - only shown to signed-in users who are
+          // registered installation partners (a doc exists at
+          // installPartners/{uid}). Everyone else never sees this row.
+          // -----------------------------------------------------------
+          if (partnerService.isPartner) ...[
+            const SizedBox(height: 12),
+            const Padding(
+              padding: EdgeInsets.only(left: 4, bottom: 8),
+              child: Text('Partner Tools', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: PsEvColors.mutedText)),
+            ),
+            Card(
+              child: _ProfileRow(
+                icon: Icons.build_circle_outlined,
+                iconColor: PsEvColors.emerald,
+                title: 'Partner Jobs',
+                subtitle: 'Accept open installation requests and manage your jobs',
+                onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PartnerJobsScreen())),
+                isLast: true,
+              ),
+            ),
+          ],
+
           const SizedBox(height: 12),
 
+          // -----------------------------------------------------------
+          // Account Settings now lives as a row here, same pattern as
+          // every item above, instead of an inline form directly on
+          // this page.
+          // -----------------------------------------------------------
           const Padding(
             padding: EdgeInsets.only(left: 4, bottom: 8),
-            child: Text('Account Settings', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: PsEvColors.mutedText)),
+            child: Text('Settings', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: PsEvColors.mutedText)),
           ),
           Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Form(
-                key: _formKey,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text('First name', style: TextStyle(fontSize: 12, color: PsEvColors.mutedText)),
-                    const SizedBox(height: 4),
-                    TextFormField(
-                      controller: _firstNameCtrl,
-                      validator: (v) => (v == null || v.trim().isEmpty) ? 'Enter your first name' : null,
-                    ),
-                    const SizedBox(height: 12),
-                    const Text('Last name', style: TextStyle(fontSize: 12, color: PsEvColors.mutedText)),
-                    const SizedBox(height: 4),
-                    TextFormField(
-                      controller: _lastNameCtrl,
-                      validator: (v) => (v == null || v.trim().isEmpty) ? 'Enter your last name' : null,
-                    ),
-                    const SizedBox(height: 12),
-                    const Text('Email', style: TextStyle(fontSize: 12, color: PsEvColors.mutedText)),
-                    const SizedBox(height: 4),
-                    TextFormField(
-                      initialValue: auth.email ?? '',
-                      enabled: false,
-                      decoration: const InputDecoration(
-                        helperText: 'Email is tied to your sign-in and cannot be changed here.',
-                        helperMaxLines: 2,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    const Text('Phone number', style: TextStyle(fontSize: 12, color: PsEvColors.mutedText)),
-                    const SizedBox(height: 4),
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Container(
-                          height: 48,
-                          padding: const EdgeInsets.symmetric(horizontal: 8),
-                          decoration: BoxDecoration(
-                            border: Border.all(color: PsEvColors.slate200, width: 1.5),
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: DropdownButtonHideUnderline(
-                            child: DropdownButton<String>(
-                              value: _countryCode,
-                              items: kCountryDialCodes
-                                  .map((c) => DropdownMenuItem(
-                                        value: c.code,
-                                        child: Text(c.code, style: const TextStyle(fontSize: 13)),
-                                      ))
-                                  .toList(),
-                              onChanged: (v) => setState(() => _countryCode = v!),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: TextFormField(
-                            controller: _phoneCtrl,
-                            keyboardType: TextInputType.phone,
-                            maxLength: 11,
-                            decoration: const InputDecoration(counterText: '', hintText: '01xxxxxxxxx'),
-                            validator: (v) {
-                              if (v == null || v.trim().isEmpty) return 'Enter your mobile number';
-                              if (!RegExp(r'^\d{11}$').hasMatch(v.trim())) return 'Must be exactly 11 digits';
-                              return null;
-                            },
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-                    PsEvFilledButton(
-                      label: _saving ? 'Saving...' : 'Save Profile',
-                      icon: Icons.cloud_done_outlined,
-                      onTap: _saving ? null : _save,
-                    ),
-                  ],
+            child: Column(
+              children: [
+                _ProfileRow(
+                  icon: Icons.person_outline,
+                  iconColor: PsEvColors.slateText,
+                  title: 'Account Settings',
+                  subtitle: 'Name, email, and phone number',
+                  onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AccountSettingsScreen())),
                 ),
-              ),
+                const Divider(height: 1),
+                _ProfileRow(
+                  icon: Icons.description_outlined,
+                  iconColor: PsEvColors.slateText,
+                  title: 'Terms & Conditions',
+                  subtitle: 'Review the latest terms of service',
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const LegalDocumentScreen(documentId: 'termsAndConditions', title: 'Terms & Conditions'),
+                    ),
+                  ),
+                ),
+                const Divider(height: 1),
+                _ProfileRow(
+                  icon: Icons.privacy_tip_outlined,
+                  iconColor: PsEvColors.slateText,
+                  title: 'Privacy Policy',
+                  subtitle: 'How your data is collected and used',
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const LegalDocumentScreen(documentId: 'privacyPolicy', title: 'Privacy Policy'),
+                    ),
+                  ),
+                  isLast: true,
+                ),
+              ],
             ),
           ),
 
           if (auth.isRegistered) ...[
-            const SizedBox(height: 12),
+            const SizedBox(height: 16),
             PsEvFilledButton(
               label: 'Sign Out',
               icon: Icons.logout,
               color: PsEvColors.red,
-              onTap: _signOut,
+              onTap: () => _signOut(context),
             ),
           ],
         ],
       ),
     );
   }
+}
 
-  Widget _manageRow({
-    required IconData icon,
-    required Color iconColor,
-    required String title,
-    required String subtitle,
-    required VoidCallback onTap,
-    bool isLast = false,
-  }) {
+class _ProfileRow extends StatelessWidget {
+  final IconData icon;
+  final Color iconColor;
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+  final bool isLast;
+
+  const _ProfileRow({
+    required this.icon,
+    required this.iconColor,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+    this.isLast = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.vertical(
-        top: isLast ? Radius.zero : Radius.zero,
         bottom: isLast ? const Radius.circular(PsEvRadii.card) : Radius.zero,
       ),
       child: Padding(

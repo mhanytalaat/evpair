@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import 'services/booking_service.dart';
 import 'services/wallet_service.dart';
 import 'services/auth_service.dart';
+import 'services/partner_service.dart';
 import 'state/app_state.dart';
 import 'theme/ps_ev_theme.dart';
 import 'screens/root/app_root.dart';
@@ -20,15 +21,12 @@ Future<void> main() async {
   runZonedGuarded(() async {
     WidgetsFlutterBinding.ensureInitialized();
 
-    // Catches Flutter framework/widget-build errors (red screen errors).
     FlutterError.onError = (FlutterErrorDetails details) {
       FlutterError.presentError(details);
       debugPrint('Flutter framework error: ${details.exception}');
       debugPrint(details.stack.toString());
     };
 
-    // Catches errors outside the Flutter framework (platform channels,
-    // async errors not caught elsewhere, etc.).
     PlatformDispatcher.instance.onError = (error, stack) {
       debugPrint('Platform error: $error');
       debugPrint(stack.toString());
@@ -42,11 +40,6 @@ Future<void> main() async {
 
       final walletService = WalletService();
 
-      // Firebase Auth persists sessions natively (no manual storage
-      // needed). Restore any existing session and load this user's cars
-      // + the charger marketplace before the first frame is drawn, so a
-      // returning user lands straight in the app with their data already
-      // in place.
       final authService = AuthService();
       await authService.tryAutoSignIn();
 
@@ -56,13 +49,13 @@ Future<void> main() async {
       }
       await appState.hydrateFromFirestore();
 
-      // Load the signed-in user's wallet balance/transactions from
-      // Firestore as well. Without this, WalletService starts from an
-      // empty in-memory state every cold launch, which is why the
-      // balance appears to "disappear" after signing out and back in -
-      // it was never being read back from Firestore in the first place.
       if (authService.uid != null) {
         await walletService.hydrateFromFirestore(authService.uid!);
+      }
+
+      final partnerService = PartnerService(walletService: walletService);
+      if (authService.uid != null) {
+        await partnerService.hydrate(authService.uid!);
       }
 
       runApp(
@@ -74,6 +67,7 @@ Future<void> main() async {
               create: (_) => BookingService(walletService: walletService),
             ),
             ChangeNotifierProvider<AuthService>.value(value: authService),
+            ChangeNotifierProvider<PartnerService>.value(value: partnerService),
           ],
           child: const EvPairApp(),
         ),
