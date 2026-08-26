@@ -6,6 +6,7 @@ import 'services/booking_service.dart';
 import 'services/wallet_service.dart';
 import 'services/auth_service.dart';
 import 'services/partner_service.dart';
+import 'services/rating_service.dart';
 import 'state/app_state.dart';
 import 'theme/ps_ev_theme.dart';
 import 'screens/root/app_root.dart';
@@ -18,6 +19,14 @@ Future<void> main() async {
   // (Firebase init failure, Firestore hydrate failure, network issue,
   // etc.) shows a friendly EVPair error screen instead of a hard iOS
   // "EVPair Crashed" system dialog with no useful info for the tester.
+  //
+  // IMPORTANT CAVEAT (see chat): this guard only catches DART-level
+  // exceptions. It cannot catch native iOS crashes that happen before
+  // Flutter's engine finishes starting - e.g. a GoogleService-Info.plist
+  // bundle ID mismatch, or a missing Info.plist permission usage string
+  // (NSLocationWhenInUseUsageDescription, NSCameraUsageDescription,
+  // NSPhotoLibraryUsageDescription). Those must be fixed at the native
+  // project level, not in this file.
   runZonedGuarded(() async {
     WidgetsFlutterBinding.ensureInitialized();
 
@@ -58,6 +67,11 @@ Future<void> main() async {
         await partnerService.hydrate(authService.uid!);
       }
 
+      final ratingService = RatingService();
+      if (authService.uid != null) {
+        await ratingService.hydrate(authService.uid!);
+      }
+
       runApp(
         MultiProvider(
           providers: [
@@ -68,6 +82,7 @@ Future<void> main() async {
             ),
             ChangeNotifierProvider<AuthService>.value(value: authService),
             ChangeNotifierProvider<PartnerService>.value(value: partnerService),
+            ChangeNotifierProvider<RatingService>.value(value: ratingService),
           ],
           child: const EvPairApp(),
         ),
@@ -101,6 +116,11 @@ class EvPairApp extends StatelessWidget {
 /// or the initial Firestore hydrate throws. Gives the tester a "Retry"
 /// action and a visible error string instead of iOS's generic
 /// "EVPair Crashed" dialog with no diagnostic value.
+///
+/// NOTE: this only ever runs if the crash happens in DART code. If the
+/// app crashes before this file even executes (see the caveat above),
+/// this screen never has a chance to appear - that's a strong signal
+/// the crash is native, not caught here.
 class StartupFailureApp extends StatelessWidget {
   final String error;
   const StartupFailureApp({super.key, required this.error});

@@ -5,9 +5,12 @@ import 'package:provider/provider.dart';
 import '../../state/app_state.dart';
 import '../../models/charger_profile.dart';
 import '../../models/enums.dart';
+import '../../services/auth_service.dart';
 import '../../services/pricing_service.dart';
+import '../../data/egypt_locations.dart';
 import '../../theme/ps_ev_theme.dart';
 import '../../theme/ps_ev_app_bar.dart';
+import '../shared/location_picker_field.dart';
 
 ({double lat, double lng})? tryParseLatLngFromMapLink(String? link) {
   if (link == null || link.trim().isEmpty) return null;
@@ -32,22 +35,30 @@ class _ChargerFormScreenState extends State<ChargerFormScreen> {
   late TextEditingController _nameCtrl;
   late TextEditingController _mapLinkCtrl;
   late TextEditingController _priceCtrl;
-  late String _city;
-  late String _area;
+
+  // City/Area now use the shared curated Egypt location list (see
+  // data/egypt_locations.dart), the exact same source
+  // DriverHomeScreen's filter and the Home Installation & Equipment
+  // request form use. This guarantees a host's charger and a driver's
+  // filter always use identical spelling - previously this screen used
+  // a separate, smaller kCityOptions/kCityAreaOptions list (from
+  // state/app_state.dart) with different city/area names entirely,
+  // which meant a charger's stored city/area could never actually match
+  // what a driver was filtering by.
+  String? _city;
+  String? _area;
+
   late double _power;
   late double _ampere;
   late PricingModel _pricingModel;
   late bool _residentsOnly;
   late String _community;
-
   late ChargingStandard _chargingStandard;
   late ConnectorType _connector;
-
   Uint8List? _photoBytes;
   String? _priceError;
 
   bool get isEditing => widget.existing != null;
-
   late final String _pendingChargerId;
 
   @override
@@ -55,14 +66,17 @@ class _ChargerFormScreenState extends State<ChargerFormScreen> {
     super.initState();
     final e = widget.existing;
     _pendingChargerId = e?.chargerId ?? 'charger_${DateTime.now().millisecondsSinceEpoch}';
-
     _nameCtrl = TextEditingController(text: e?.label ?? 'My Home Charger');
     _mapLinkCtrl = TextEditingController(text: e?.mapLink ?? '');
     _priceCtrl = TextEditingController(text: e?.price.toString() ?? '');
 
-    _city = e?.city ?? kCityOptions.first;
-    final initialAreas = kCityAreaOptions[_city] ?? const ['Other'];
-    _area = (e != null && initialAreas.contains(e.area)) ? e.area : initialAreas.first;
+    // Only carry over the existing charger's city/area if they're still
+    // present in the curated list - an older charger saved under the
+    // previous (different) city/area names will start blank here and
+    // the host will need to re-pick from the new list once, which also
+    // has the side effect of automatically fixing that mismatch.
+    _city = (e != null && isKnownGovernorate(e.city)) ? e.city : null;
+    _area = (e != null && isKnownArea(_city, e.area)) ? e.area : null;
 
     _power = e?.powerKw ?? kPowerOptions[3];
     _ampere = e?.ampere ?? kAmpereOptions[1];
@@ -70,7 +84,6 @@ class _ChargerFormScreenState extends State<ChargerFormScreen> {
     _residentsOnly = e?.residentsOnly ?? false;
     _community = e?.restrictedCommunity ?? kCommunityOptions.first;
     _photoBytes = e?.photoBytes;
-
     _chargingStandard = e?.chargingStandard ?? ChargingStandard.europeanCcs2;
     final validConnectors = _chargingStandard.compatibleConnectors;
     _connector = (e != null && validConnectors.contains(e.connector)) ? e.connector : validConnectors.first;
@@ -99,7 +112,6 @@ class _ChargerFormScreenState extends State<ChargerFormScreen> {
       ),
     );
     if (source == null) return;
-
     try {
       final file = await ImagePicker().pickImage(source: source, imageQuality: 80);
       if (file == null) return;
@@ -131,25 +143,31 @@ class _ChargerFormScreenState extends State<ChargerFormScreen> {
   ({double lat, double lng}) _resolveCoordinates() {
     final fromLink = tryParseLatLngFromMapLink(_mapLinkCtrl.text);
     if (fromLink != null) return fromLink;
-
-    final areaCenter = kAreaCoordinates[_area];
-    if (areaCenter != null) {
+    final govCenter = kGovernorateCoordinates[_city];
+    if (govCenter != null) {
       final jitter = jitterOffsetFor(_pendingChargerId);
-      return (lat: areaCenter.lat + jitter.lat, lng: areaCenter.lng + jitter.lng);
+      return (lat: govCenter.lat + jitter.lat, lng: govCenter.lng + jitter.lng);
     }
-
     if (widget.existing != null) {
       return (lat: widget.existing!.latitude, lng: widget.existing!.longitude);
     }
-    return kAreaCoordinates['Other']!;
+    // Fallback if somehow no governorate matched yet - Cairo center.
+    return kGovernorateCoordinates['Cairo']!;
   }
 
   void _submit() {
     final app = context.read<AppState>();
     final price = double.tryParse(_priceCtrl.text);
+
     if (_nameCtrl.text.trim().isEmpty || price == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please fill in all charger details.'), backgroundColor: PsEvColors.red),
+      );
+      return;
+    }
+    if (_city == null || _area == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please select the City and Area for this charger.'), backgroundColor: PsEvColors.red),
       );
       return;
     }
@@ -172,8 +190,8 @@ class _ChargerFormScreenState extends State<ChargerFormScreen> {
     if (isEditing) {
       final ch = widget.existing!;
       ch.label = _nameCtrl.text.trim();
-      ch.city = _city;
-      ch.area = _area;
+      ch.city = _city!;
+      ch.area = _area!;
       ch.mapLink = _mapLinkCtrl.text.trim().isEmpty ? null : _mapLinkCtrl.text.trim();
       ch.connector = _connector;
       ch.powerKw = _power;
@@ -196,8 +214,8 @@ class _ChargerFormScreenState extends State<ChargerFormScreen> {
         powerKw: _power,
         ampere: _ampere,
         connector: _connector,
-        city: _city,
-        area: _area,
+        city: _city!,
+        area: _area!,
         chargingStandard: _chargingStandard,
         pricingModel: _pricingModel,
         price: price,
@@ -215,10 +233,11 @@ class _ChargerFormScreenState extends State<ChargerFormScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final auth = context.read<AuthService>();
+    final app = context.read<AppState>();
     final limits = PricingService.limitsFor(_pricingModel);
     final hint = PricingService.hintText(_pricingModel, _power, double.tryParse(_priceCtrl.text) ?? 0);
     final connectorsForStandard = _chargingStandard.compatibleConnectors;
-    final areasForCity = kCityAreaOptions[_city] ?? const ['Other'];
 
     return Scaffold(
       appBar: PsEvAppBar(title: isEditing ? 'Edit Charger' : 'Add Charger'),
@@ -256,47 +275,43 @@ class _ChargerFormScreenState extends State<ChargerFormScreen> {
                     ),
                   ),
                   const SizedBox(height: 14),
-
                   const Text('Charger name', style: TextStyle(fontSize: 12, color: PsEvColors.mutedText)),
                   const SizedBox(height: 4),
                   TextField(controller: _nameCtrl),
                   const SizedBox(height: 12),
 
-                  const Text('City', style: TextStyle(fontSize: 12, color: PsEvColors.mutedText)),
+                  // City/Area picker - shared with the driver filter and
+                  // service request form (see egypt_locations.dart /
+                  // LocationPickerField), so this charger will always be
+                  // discoverable by drivers filtering the same City/Area.
+                  const Text('City & Area', style: TextStyle(fontSize: 12, color: PsEvColors.mutedText)),
                   const SizedBox(height: 4),
-                  DropdownButtonFormField<String>(
-                    value: _city,
-                    items: kCityOptions.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
-                    onChanged: (v) => setState(() {
-                      _city = v!;
-                      final nextAreas = kCityAreaOptions[_city] ?? const ['Other'];
-                      _area = nextAreas.first;
+                  LocationPickerField(
+                    governorate: _city,
+                    area: _area,
+                    showAllOption: false,
+                    userId: app.currentUserId ?? '',
+                    userName: auth.displayName,
+                    onGovernorateChanged: (v) => setState(() {
+                      _city = v;
+                      _area = null;
                     }),
-                  ),
-                  const SizedBox(height: 12),
-
-                  const Text('Location / Area', style: TextStyle(fontSize: 12, color: PsEvColors.mutedText)),
-                  const SizedBox(height: 4),
-                  DropdownButtonFormField<String>(
-                    value: _area,
-                    items: areasForCity.map((a) => DropdownMenuItem(value: a, child: Text(a))).toList(),
-                    onChanged: (v) => setState(() => _area = v!),
+                    onAreaChanged: (v) => setState(() => _area = v),
                   ),
                   const Padding(
                     padding: EdgeInsets.only(top: 4, bottom: 8),
                     child: Text(
-                      'City and Area are used for filtering/search. Without an exact Maps link, your '
-                      'charger will be placed near the Area\'s center (spread out from other chargers in the '
-                      'same area). For a precise pin at your exact address, paste a Maps link below.',
+                      'City and Area are used for filtering/search, and must match the same list drivers '
+                      'use. Without an exact Maps link, your charger will be placed near the City\'s center '
+                      '(spread out from other chargers in the same city). For a precise pin at your exact '
+                      'address, paste a Maps link below.',
                       style: TextStyle(fontSize: 11, color: PsEvColors.mutedText),
                     ),
                   ),
-
                   const Text('Maps link', style: TextStyle(fontSize: 12, color: PsEvColors.mutedText)),
                   const SizedBox(height: 4),
                   TextField(controller: _mapLinkCtrl, decoration: const InputDecoration(hintText: 'https://maps.google.com/?q=30.0131,31.4326')),
                   const SizedBox(height: 16),
-
                   const Text('Charging standard', style: TextStyle(fontSize: 12, color: PsEvColors.mutedText)),
                   const SizedBox(height: 4),
                   DropdownButtonFormField<ChargingStandard>(
@@ -316,7 +331,6 @@ class _ChargerFormScreenState extends State<ChargerFormScreen> {
                       style: TextStyle(fontSize: 11, color: PsEvColors.mutedText),
                     ),
                   ),
-
                   const Text('Connector type', style: TextStyle(fontSize: 12, color: PsEvColors.mutedText)),
                   const SizedBox(height: 4),
                   DropdownButtonFormField<ConnectorType>(
@@ -325,7 +339,6 @@ class _ChargerFormScreenState extends State<ChargerFormScreen> {
                     onChanged: (v) => setState(() => _connector = v!),
                   ),
                   const SizedBox(height: 12),
-
                   const Text('Power (kW)', style: TextStyle(fontSize: 12, color: PsEvColors.mutedText)),
                   const SizedBox(height: 4),
                   DropdownButtonFormField<double>(
@@ -334,7 +347,6 @@ class _ChargerFormScreenState extends State<ChargerFormScreen> {
                     onChanged: (v) => setState(() => _power = v!),
                   ),
                   const SizedBox(height: 12),
-
                   const Text('Ampere (A)', style: TextStyle(fontSize: 12, color: PsEvColors.mutedText)),
                   const SizedBox(height: 4),
                   DropdownButtonFormField<double>(
@@ -343,7 +355,6 @@ class _ChargerFormScreenState extends State<ChargerFormScreen> {
                     onChanged: (v) => setState(() => _ampere = v!),
                   ),
                   const SizedBox(height: 12),
-
                   const Text('Pricing model', style: TextStyle(fontSize: 12, color: PsEvColors.mutedText)),
                   const SizedBox(height: 4),
                   DropdownButtonFormField<PricingModel>(
@@ -358,7 +369,6 @@ class _ChargerFormScreenState extends State<ChargerFormScreen> {
                     }),
                   ),
                   const SizedBox(height: 12),
-
                   Text('Price (${limits.unitLabel})', style: const TextStyle(fontSize: 12, color: PsEvColors.mutedText)),
                   const SizedBox(height: 4),
                   TextField(
@@ -371,7 +381,6 @@ class _ChargerFormScreenState extends State<ChargerFormScreen> {
                     padding: const EdgeInsets.only(top: 4, bottom: 10),
                     child: Text(hint, style: const TextStyle(fontSize: 11, color: PsEvColors.emerald)),
                   ),
-
                   SwitchListTile(
                     contentPadding: EdgeInsets.zero,
                     activeColor: PsEvColors.emerald,
@@ -393,7 +402,6 @@ class _ChargerFormScreenState extends State<ChargerFormScreen> {
                         onChanged: (v) => setState(() => _community = v!),
                       ),
                     ),
-
                   const SizedBox(height: 12),
                   PsEvFilledButton(
                     label: isEditing ? 'Save Changes' : 'Save Charger',

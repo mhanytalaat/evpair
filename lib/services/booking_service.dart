@@ -78,6 +78,7 @@ class BookingService extends ChangeNotifier {
     BookingStatus.confirmed,
     BookingStatus.inProgress,
   ];
+
   static const List<BookingStatus> cancelledStatuses = [
     BookingStatus.declinedByHost,
     BookingStatus.cancelledByDriver,
@@ -112,7 +113,6 @@ class BookingService extends ChangeNotifier {
   bool isRangeAvailable(ChargerProfile charger, DateTime start, DateTime end) {
     final fitsSomeWindow = charger.freeSlots.any((s) => s.canFit(start, end));
     if (!fitsSomeWindow) return false;
-
     final overlaps = _liveBookingsForCharger(charger.chargerId).any(
       (b) => b.requestedStart.isBefore(end) && start.isBefore(b.requestedEnd),
     );
@@ -137,7 +137,6 @@ class BookingService extends ChangeNotifier {
         'This charger is restricted to ${charger.restrictedCommunity} residents only.',
       );
     }
-
     if (!requestedEnd.isAfter(requestedStart)) {
       throw TimeRangeUnavailableException('End time must be after start time.');
     }
@@ -150,14 +149,12 @@ class BookingService extends ChangeNotifier {
         'That time range is no longer available - it may be outside the host\'s free window or overlap another booking.',
       );
     }
-
     final heldAmount = PricingService.computeCost(
       model: charger.pricingModel,
       price: charger.price,
       powerKw: charger.powerKw,
       minutes: minutes.toDouble(),
     );
-
     final booking = Booking(
       id: _uuid.v4(),
       driverId: driverId,
@@ -180,11 +177,9 @@ class BookingService extends ChangeNotifier {
       chargerLatitude: charger.latitude,
       chargerLongitude: charger.longitude,
     );
-
     final held = walletService.holdForBooking(driverId: driverId, bookingId: booking.id, amount: heldAmount);
     booking.walletHeld = held;
     booking.evaluateProgress();
-
     _bookings.add(booking);
     notifyListeners();
     return booking;
@@ -236,6 +231,14 @@ class BookingService extends ChangeNotifier {
     return ok;
   }
 
+  /// Stops an in-progress session, settles the actual charging cost
+  /// against the wallet hold, and - new - charges an overstay penalty
+  /// (see Booking.completeAndSettle / kOverstayGraceMinutes /
+  /// kOverstayPenaltyPerMinute) if the driver left the car
+  /// parked/plugged in more than the grace period past the originally
+  /// booked end time. The penalty is charged separately from the normal
+  /// settlement since the wallet hold only ever covers the booked
+  /// duration, not extra overstay time.
   void completeSession(String bookingId) {
     final booking = findById(bookingId);
     if (booking == null) return;
@@ -246,6 +249,16 @@ class BookingService extends ChangeNotifier {
       bookingId: booking.id,
       actualCost: booking.actualCost ?? 0,
     );
+    final penalty = booking.overstayPenalty ?? 0;
+    if (penalty > 0) {
+      walletService.chargeOverstayPenalty(
+        driverId: booking.driverId,
+        hostId: booking.hostId,
+        bookingId: booking.id,
+        penaltyAmount: penalty,
+        overstayMinutes: booking.overstayMinutes ?? 0,
+      );
+    }
     notifyListeners();
   }
 }

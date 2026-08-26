@@ -1,3 +1,4 @@
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
@@ -12,9 +13,14 @@ import '../../services/auth_service.dart';
 import '../../services/wallet_service.dart';
 import '../../services/booking_service.dart';
 import '../../services/map_launcher_service.dart';
+import '../../services/profile_photo_service.dart';
 import '../../theme/ps_ev_theme.dart';
 import '../auth/register_screen.dart';
 import '../profile/profile_screen.dart';
+import '../shared/location_picker_field.dart';
+import 'my_cars_screen.dart';
+import '../host/host_home_screen.dart';
+import '../partner/home_installation_screen.dart';
 import 'wallet_screen.dart';
 import 'booking_status_screen.dart';
 import 'booking_request_screen.dart';
@@ -22,18 +28,25 @@ import 'my_bookings_screen.dart';
 
 enum _ChargerAccessState { standardMismatch, residentsOnlyLocked, full, available }
 
-/// Root/home screen. Redesigned as a full-screen map (like a ride-hailing
-/// home screen) with:
+/// Root/home screen. Full-screen map (like a ride-hailing home screen) with:
 ///   - A floating search bar + filter icon pinned at the top (tapping
-///     either opens the same City/Area filter sheet).
+///     either opens the City/Area/Availability filter sheet, using the
+///     shared curated Egypt location list - see LocationPickerField).
 ///   - A floating "recenter to my location" button.
+///   - A floating "+" quick-add button (Cars / Stations / Equipment).
 ///   - A live-session banner when a booking is confirmed/in-progress.
 ///   - A draggable bottom sheet with the station list + selected station
 ///     detail + free-window booking, same logic as before.
 ///   - A floating 4-icon pill nav: Map (this screen, always shown active),
-///     Sessions, Wallet, Profile. Cars and Stations (host access) have
-///     moved into Profile - see ProfileScreen's "Manage" section - since
-///     they're setup-once actions, not everyday destinations.
+///     Sessions, Wallet, Profile (now shows the user's photo if they've
+///     set one - see ProfilePhotoService).
+///
+/// STACK ORDERING NOTE: the recenter button, the quick-add "+" button,
+/// and the footer nav are all declared AFTER the DraggableScrollableSheet
+/// in the Stack's children list. Flutter Stacks paint later children on
+/// top of earlier ones - the sheet's opaque white surface (which can be
+/// up to 90% of the screen height when dragged up, and 40% by default)
+/// would otherwise cover and hide any floating button declared before it.
 class DriverHomeScreen extends StatefulWidget {
   const DriverHomeScreen({super.key});
 
@@ -45,6 +58,7 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
   String? _selectedChargerId;
   String? _selectedCity;
   String? _selectedArea;
+  bool _onlyAvailable = false;
   final MapController _mapController = MapController();
   final DraggableScrollableController _sheetController = DraggableScrollableController();
 
@@ -105,8 +119,7 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
 
   /// Recenters the map on the driver's current GPS location. Handles the
   /// full permission flow (service disabled / denied / denied forever)
-  /// with a friendly message instead of throwing, since this runs from a
-  /// floating icon button with no dedicated error UI of its own.
+  /// with a friendly message instead of throwing.
   Future<void> _recenterToMyLocation() async {
     try {
       final serviceEnabled = await Geolocator.isLocationServiceEnabled();
@@ -134,10 +147,14 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
   }
 
   // ---------------------------------------------------------------------
-  // Location filter sheet - triggered from either the search bar or the
-  // filter icon beside it.
+  // Location + availability filter sheet - triggered from either the
+  // search bar or the filter icon beside it. City/Area now use the
+  // shared curated Egypt location list (LocationPickerField).
   // ---------------------------------------------------------------------
-  void _showFilterSheet(BuildContext context, List<String> cityOptions, List<String> areaOptions) {
+  void _showFilterSheet(BuildContext context) {
+    final app = context.read<AppState>();
+    final auth = context.read<AuthService>();
+
     showModalBottomSheet(
       context: context,
       showDragHandle: true,
@@ -153,71 +170,201 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
                   top: 4,
                   bottom: MediaQuery.of(sheetContext).viewInsets.bottom + 20,
                 ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text('Filter Stations', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 17)),
-                    const SizedBox(height: 14),
-                    DropdownButtonFormField<String?>(
-                      value: _selectedCity,
-                      decoration: const InputDecoration(labelText: 'City'),
-                      items: [
-                        const DropdownMenuItem<String?>(value: null, child: Text('All Cities')),
-                        ...cityOptions.map((city) => DropdownMenuItem<String?>(value: city, child: Text(city))),
-                      ],
-                      onChanged: (value) {
-                        setState(() {
-                          _selectedCity = value;
-                          _selectedArea = null;
-                          _selectedChargerId = null;
-                        });
-                        setSheetState(() {});
-                      },
-                    ),
-                    const SizedBox(height: 12),
-                    DropdownButtonFormField<String?>(
-                      value: _selectedArea,
-                      decoration: const InputDecoration(labelText: 'Area'),
-                      items: [
-                        const DropdownMenuItem<String?>(value: null, child: Text('All Areas')),
-                        ...areaOptions.map((area) => DropdownMenuItem<String?>(value: area, child: Text(area))),
-                      ],
-                      onChanged: (value) {
-                        setState(() {
-                          _selectedArea = value;
-                          _selectedChargerId = null;
-                        });
-                        setSheetState(() {});
-                      },
-                    ),
-                    const SizedBox(height: 16),
-                    if (_selectedCity != null || _selectedArea != null)
-                      TextButton.icon(
-                        onPressed: () {
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('Filter Stations', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 17)),
+                      const SizedBox(height: 14),
+                      LocationPickerField(
+                        governorate: _selectedCity,
+                        area: _selectedArea,
+                        showAllOption: true,
+                        userId: app.currentUserId ?? '',
+                        userName: auth.displayName,
+                        onGovernorateChanged: (v) {
                           setState(() {
-                            _selectedCity = null;
+                            _selectedCity = v;
                             _selectedArea = null;
+                            _selectedChargerId = null;
                           });
                           setSheetState(() {});
                         },
-                        icon: const Icon(Icons.clear, size: 16),
-                        label: const Text('Clear filters'),
+                        onAreaChanged: (v) {
+                          setState(() {
+                            _selectedArea = v;
+                            _selectedChargerId = null;
+                          });
+                          setSheetState(() {});
+                        },
                       ),
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton(
-                        onPressed: () => Navigator.pop(sheetContext),
-                        child: const Text('Show Stations'),
+                      const SizedBox(height: 6),
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        value: _onlyAvailable,
+                        activeColor: PsEvColors.emerald,
+                        title: const Text('Only show stations with a free slot', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                        subtitle: const Text('Hides fully booked stations from the map and list', style: TextStyle(fontSize: 11, color: PsEvColors.mutedText)),
+                        onChanged: (value) {
+                          setState(() {
+                            _onlyAvailable = value;
+                            _selectedChargerId = null;
+                          });
+                          setSheetState(() {});
+                        },
                       ),
-                    ),
-                  ],
+                      const SizedBox(height: 10),
+                      if (_selectedCity != null || _selectedArea != null || _onlyAvailable)
+                        TextButton.icon(
+                          onPressed: () {
+                            setState(() {
+                              _selectedCity = null;
+                              _selectedArea = null;
+                              _onlyAvailable = false;
+                            });
+                            setSheetState(() {});
+                          },
+                          icon: const Icon(Icons.clear, size: 16),
+                          label: const Text('Clear filters'),
+                        ),
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton(
+                          onPressed: () => Navigator.pop(sheetContext),
+                          child: const Text('Show Stations'),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             );
           },
         );
       },
+    );
+  }
+
+  // ---------------------------------------------------------------------
+  // Floating "+" quick-add sheet: Cars, Stations, Equipment.
+  //
+  // FIX for "bottom overflowed by 12 pixels" (yellow/black stripes) that
+  // appeared above "Check Equipment": the Column's total content height
+  // (title + 3 tiles + spacing), combined with the modal's drag handle
+  // and the device's bottom safe-area/home-indicator inset, could be
+  // very slightly taller than the space the sheet allocated before this
+  // fix - by a small, device-dependent margin (reported as 12px).
+  //
+  //   1. The Column is now wrapped in a SingleChildScrollView, so if the
+  //      content is ever taller than the available space (e.g. a very
+  //      small phone, or larger system font size), it scrolls instead
+  //      of overflowing and showing the warning stripes.
+  //   2. The bottom padding is now `20 + MediaQuery.of(context).padding
+  //      .bottom` instead of a flat `20` - this accounts for the actual
+  //      safe-area inset (e.g. the iPhone home-indicator bar) instead of
+  //      guessing a fixed value, which was the root mismatch causing the
+  //      overflow in the first place.
+  // ---------------------------------------------------------------------
+  void _showQuickAddSheet(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: SingleChildScrollView(
+          child: Padding(
+            padding: EdgeInsets.fromLTRB(
+              16,
+              4,
+              16,
+              20 + MediaQuery.of(sheetContext).padding.bottom,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Quick Add', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 17)),
+                const SizedBox(height: 14),
+                _quickAddTile(
+                  icon: Icons.electric_car,
+                  iconColor: PsEvColors.emerald,
+                  title: 'Add a Car',
+                  subtitle: 'Register a new vehicle to your account',
+                  onTap: () {
+                    Navigator.pop(sheetContext);
+                    Navigator.push(context, MaterialPageRoute(builder: (_) => const MyCarsScreen()));
+                  },
+                ),
+                const SizedBox(height: 10),
+                _quickAddTile(
+                  icon: Icons.ev_station,
+                  iconColor: PsEvColors.blue,
+                  title: 'Add a Station',
+                  subtitle: 'List a charging station you host',
+                  onTap: () async {
+                    Navigator.pop(sheetContext);
+                    final ok = await ensureRegistered(context);
+                    if (!ok || !context.mounted) return;
+                    Navigator.push(context, MaterialPageRoute(builder: (_) => const HostHomeScreen()));
+                  },
+                ),
+                const SizedBox(height: 10),
+                _quickAddTile(
+                  icon: Icons.build_circle_outlined,
+                  iconColor: PsEvColors.amber,
+                  title: 'Check Equipment',
+                  subtitle: 'Browse cables, adaptors & stations, or request a service',
+                  onTap: () async {
+                    Navigator.pop(sheetContext);
+                    final ok = await ensureRegistered(context);
+                    if (!ok || !context.mounted) return;
+                    Navigator.push(context, MaterialPageRoute(builder: (_) => const HomeInstallationScreen()));
+                  },
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _quickAddTile({
+    required IconData icon,
+    required Color iconColor,
+    required String title,
+    required String subtitle,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(16),
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(color: PsEvColors.slate100, borderRadius: BorderRadius.circular(16)),
+        child: Row(
+          children: [
+            Container(
+              width: 46,
+              height: 46,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(color: iconColor.withOpacity(0.15), shape: BoxShape.circle),
+              child: Icon(icon, color: iconColor, size: 22),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                  Text(subtitle, style: const TextStyle(color: PsEvColors.mutedText, fontSize: 12)),
+                ],
+              ),
+            ),
+            const Icon(Icons.chevron_right, color: PsEvColors.mutedText),
+          ],
+        ),
+      ),
     );
   }
 
@@ -233,21 +380,14 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
     final hasActiveBooking = activeBooking != null &&
         (activeBooking.status == BookingStatus.confirmed || activeBooking.status == BookingStatus.inProgress);
 
-    final cityOptions = allChargers.map((c) => c.city).toSet().toList()..sort();
-    final areaOptions = allChargers
-        .where((c) => _selectedCity == null || c.city == _selectedCity)
-        .map((c) => c.area)
-        .toSet()
-        .toList()
-      ..sort();
-
     final chargers = allChargers.where((c) {
       if (_selectedCity != null && c.city != _selectedCity) return false;
       if (_selectedArea != null && c.area != _selectedArea) return false;
+      if (_onlyAvailable && !c.hasAnyFreeSlot) return false;
       return true;
     }).toList();
 
-    final filtersActive = _selectedCity != null || _selectedArea != null;
+    final filtersActive = _selectedCity != null || _selectedArea != null || _onlyAvailable;
     final searchLabel = _selectedArea != null
         ? '${_selectedArea!}, ${_selectedCity!}'
         : (_selectedCity ?? 'Find a charging station');
@@ -278,6 +418,11 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
               ),
             ),
             Positioned(
+              right: 16,
+              bottom: MediaQuery.of(context).padding.bottom + 92,
+              child: _quickAddButton(context),
+            ),
+            Positioned(
               left: 20,
               right: 20,
               bottom: MediaQuery.of(context).padding.bottom + 16,
@@ -304,8 +449,6 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
     final dateFmt = DateFormat('EEE, MMM d');
     final timeFmt = DateFormat('h:mm a');
 
-    // Camera center always uses the full unfiltered set so the map
-    // doesn't jump to (0,0) when a filter briefly matches nothing.
     final avgLat = allChargers.map((c) => c.latitude).reduce((a, b) => a + b) / allChargers.length;
     final avgLng = allChargers.map((c) => c.longitude).reduce((a, b) => a + b) / allChargers.length;
 
@@ -313,9 +456,7 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
       extendBody: true,
       body: Stack(
         children: [
-          // ------------------------------------------------------------
-          // Full-screen map.
-          // ------------------------------------------------------------
+          // Layer 1: Full-screen map.
           Positioned.fill(
             child: FlutterMap(
               mapController: _mapController,
@@ -362,10 +503,7 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
             ),
           ),
 
-          // ------------------------------------------------------------
-          // Floating search bar + filter icon (filter sits right next to
-          // the search bar, both trigger the same filter sheet).
-          // ------------------------------------------------------------
+          // Layer 2: Floating search bar + filter icon.
           Positioned(
             top: MediaQuery.of(context).padding.top + 12,
             left: 16,
@@ -380,7 +518,7 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
                     shadowColor: Colors.black26,
                     child: InkWell(
                       borderRadius: BorderRadius.circular(999),
-                      onTap: () => _showFilterSheet(context, cityOptions, areaOptions),
+                      onTap: () => _showFilterSheet(context),
                       child: Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                         child: Row(
@@ -399,6 +537,11 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
                                 ),
                               ),
                             ),
+                            if (_onlyAvailable)
+                              const Padding(
+                                padding: EdgeInsets.only(left: 6),
+                                child: Icon(Icons.bolt, size: 15, color: PsEvColors.emerald),
+                              ),
                           ],
                         ),
                       ),
@@ -413,7 +556,7 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
                   shadowColor: Colors.black26,
                   child: InkWell(
                     customBorder: const CircleBorder(),
-                    onTap: () => _showFilterSheet(context, cityOptions, areaOptions),
+                    onTap: () => _showFilterSheet(context),
                     child: Padding(
                       padding: const EdgeInsets.all(14),
                       child: Stack(
@@ -439,11 +582,7 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
             ),
           ),
 
-          // ------------------------------------------------------------
-          // Live session banner - only shown when there's a confirmed or
-          // in-progress booking, so the driver never loses track of an
-          // active charge without needing a dedicated footer tab for it.
-          // ------------------------------------------------------------
+          // Layer 3: Live session banner.
           if (hasActiveBooking)
             Positioned(
               top: MediaQuery.of(context).padding.top + 70,
@@ -452,32 +591,7 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
               child: _buildLiveSessionBanner(context, activeBooking),
             ),
 
-          // ------------------------------------------------------------
-          // Recenter-to-my-location floating button.
-          // ------------------------------------------------------------
-          Positioned(
-            right: 16,
-            bottom: MediaQuery.of(context).padding.bottom + 110,
-            child: Material(
-              color: Colors.white,
-              shape: const CircleBorder(),
-              elevation: 4,
-              shadowColor: Colors.black26,
-              child: InkWell(
-                customBorder: const CircleBorder(),
-                onTap: _recenterToMyLocation,
-                child: const Padding(
-                  padding: EdgeInsets.all(14),
-                  child: Icon(Icons.my_location, color: PsEvColors.emerald, size: 22),
-                ),
-              ),
-            ),
-          ),
-
-          // ------------------------------------------------------------
-          // Bottom draggable sheet: station list + selected station
-          // detail + booking. Peeks at ~40%, drag up to ~90%.
-          // ------------------------------------------------------------
+          // Layer 4: Draggable bottom sheet (station list + detail).
           DraggableScrollableSheet(
             controller: _sheetController,
             initialChildSize: 0.4,
@@ -502,7 +616,6 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
                         decoration: BoxDecoration(color: PsEvColors.slate200, borderRadius: BorderRadius.circular(2)),
                       ),
                     ),
-
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
@@ -515,12 +628,12 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
                             onPressed: () => setState(() {
                               _selectedCity = null;
                               _selectedArea = null;
+                              _onlyAvailable = false;
                             }),
                             child: const Text('Clear filters', style: TextStyle(fontSize: 12)),
                           ),
                       ],
                     ),
-
                     if (filtersActive)
                       Padding(
                         padding: const EdgeInsets.only(top: 6, bottom: 4),
@@ -540,12 +653,16 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
                                 label: Text(_selectedArea!),
                                 onDeleted: () => setState(() => _selectedArea = null),
                               ),
+                            if (_onlyAvailable)
+                              Chip(
+                                avatar: const Icon(Icons.bolt, size: 14, color: PsEvColors.emerald),
+                                label: const Text('Available only'),
+                                onDeleted: () => setState(() => _onlyAvailable = false),
+                              ),
                           ],
                         ),
                       ),
-
                     const SizedBox(height: 8),
-
                     if (chargers.isEmpty) ...[
                       const SizedBox(height: 20),
                       const Center(
@@ -556,7 +673,8 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
                             Text('No stations match these filters', style: TextStyle(fontWeight: FontWeight.bold)),
                             SizedBox(height: 4),
                             Text(
-                              'Try a different city or area.',
+                              'Try a different city, area, or turn off "available only".',
+                              textAlign: TextAlign.center,
                               style: TextStyle(color: PsEvColors.mutedText, fontSize: 12),
                             ),
                           ],
@@ -574,7 +692,6 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
                         ],
                       ),
                       const SizedBox(height: 12),
-
                       SizedBox(
                         height: 78,
                         child: ListView.separated(
@@ -627,9 +744,7 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
                           },
                         ),
                       ),
-
                       const SizedBox(height: 16),
-
                       if (selected != null) ...[
                         if (selected.photoBytes != null)
                           ClipRRect(
@@ -690,7 +805,6 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
                           ],
                         ),
                         const SizedBox(height: 10),
-
                         if (standardMismatch)
                           Container(
                             padding: const EdgeInsets.all(10),
@@ -747,7 +861,6 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
                             ),
                           ),
                         ],
-
                         if (bookable) ...[
                           const SizedBox(height: 12),
                           const Text('Host Free Windows', style: TextStyle(fontWeight: FontWeight.bold)),
@@ -794,10 +907,33 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
             },
           ),
 
-          // ------------------------------------------------------------
-          // Floating 4-icon footer nav - always the last Stack child so
-          // it stays visible above the draggable sheet at any drag height.
-          // ------------------------------------------------------------
+          // Layer 5: Recenter, quick-add "+", and footer - ALL declared
+          // after the sheet above so they always paint on top of it.
+          Positioned(
+            right: 16,
+            bottom: MediaQuery.of(context).padding.bottom + 110,
+            child: Material(
+              color: Colors.white,
+              shape: const CircleBorder(),
+              elevation: 4,
+              shadowColor: Colors.black26,
+              child: InkWell(
+                customBorder: const CircleBorder(),
+                onTap: _recenterToMyLocation,
+                child: const Padding(
+                  padding: EdgeInsets.all(14),
+                  child: Icon(Icons.my_location, color: PsEvColors.emerald, size: 22),
+                ),
+              ),
+            ),
+          ),
+
+          Positioned(
+            right: 16,
+            bottom: MediaQuery.of(context).padding.bottom + 168,
+            child: _quickAddButton(context),
+          ),
+
           Positioned(
             left: 20,
             right: 20,
@@ -805,6 +941,23 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
             child: _buildFloatingFooter(context, app, auth, hasActiveBooking),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _quickAddButton(BuildContext context) {
+    return Material(
+      color: PsEvColors.emerald,
+      shape: const CircleBorder(),
+      elevation: 5,
+      shadowColor: Colors.black45,
+      child: InkWell(
+        customBorder: const CircleBorder(),
+        onTap: () => _showQuickAddSheet(context),
+        child: const Padding(
+          padding: EdgeInsets.all(14),
+          child: Icon(Icons.add, color: Colors.white, size: 22),
+        ),
       ),
     );
   }
@@ -850,11 +1003,6 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
     );
   }
 
-  // ---------------------------------------------------------------------
-  // Floating footer: Map (active, labeled pill - tapping it just
-  // collapses the sheet back down to reveal the map), Sessions, Wallet,
-  // Profile. Cars/Stations live under Profile now (see ProfileScreen).
-  // ---------------------------------------------------------------------
   Widget _buildFloatingFooter(BuildContext context, AppState app, AuthService auth, bool hasActiveBooking) {
     return Container(
       height: 64,
@@ -913,22 +1061,42 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
             },
             child: Padding(
               padding: const EdgeInsets.all(6),
-              child: CircleAvatar(
-                radius: 16,
-                backgroundColor: auth.isRegistered ? PsEvColors.emerald : PsEvColors.slate200,
-                child: Text(
+              child: _footerProfileAvatar(auth, app.currentUserId),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _footerProfileAvatar(AuthService auth, String? uid) {
+    if (uid == null) {
+      return CircleAvatar(
+        radius: 16,
+        backgroundColor: PsEvColors.slate200,
+        child: const Text('?', style: TextStyle(color: PsEvColors.mutedText, fontSize: 11, fontWeight: FontWeight.w800)),
+      );
+    }
+    return StreamBuilder<Uint8List?>(
+      stream: ProfilePhotoService.watch(uid),
+      builder: (context, snapshot) {
+        final bytes = snapshot.data;
+        return CircleAvatar(
+          radius: 16,
+          backgroundColor: auth.isRegistered ? PsEvColors.emerald : PsEvColors.slate200,
+          backgroundImage: bytes != null ? MemoryImage(bytes) : null,
+          child: bytes == null
+              ? Text(
                   auth.isRegistered ? auth.initials : '?',
                   style: TextStyle(
                     color: auth.isRegistered ? Colors.white : PsEvColors.mutedText,
                     fontSize: 11,
                     fontWeight: FontWeight.w800,
                   ),
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
+                )
+              : null,
+        );
+      },
     );
   }
 

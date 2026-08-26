@@ -1,7 +1,10 @@
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 import '../../services/auth_service.dart';
 import '../../services/partner_service.dart';
+import '../../services/profile_photo_service.dart';
 import '../../state/app_state.dart';
 import '../../theme/ps_ev_theme.dart';
 import '../auth/register_screen.dart';
@@ -13,14 +16,19 @@ import '../root/app_root.dart';
 import '../legal/legal_document_screen.dart';
 import '../partner/home_installation_screen.dart';
 import '../partner/partner_jobs_screen.dart';
+import '../shared/contact_support_screen.dart';
 import 'account_settings_screen.dart';
 
-/// Profile / account hub. Cars, Stations, Wallet, and Booking History
-/// are surfaced here as "Manage" rows since they're occasional-use
-/// actions, not everyday destinations that deserve footer space.
-/// Account Settings and Legal are listed the same way for a single
-/// consistent list-row pattern throughout this screen - nothing is
-/// shown as an inline form directly on this page anymore.
+/// Profile / account hub. Cars, Stations, Wallet, Booking History, and
+/// Home Installation & Equipment are surfaced here as "Manage" rows
+/// since they're occasional-use actions, not everyday destinations that
+/// deserve footer space. Account Settings, Legal, and Contact Support
+/// are listed the same way for a single consistent list-row pattern.
+///
+/// The avatar at the top is now tappable - lets the user set/change/
+/// remove their own profile photo (see ProfilePhotoService), stored as
+/// base64 in Firestore so it works identically on web, iOS, and Android
+/// with no Storage/CORS setup required.
 class ProfileScreen extends StatelessWidget {
   const ProfileScreen({super.key});
 
@@ -48,10 +56,59 @@ class ProfileScreen extends StatelessWidget {
     );
   }
 
+  Future<void> _showChangePhotoSheet(BuildContext context, String uid) async {
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.camera_alt_outlined),
+              title: const Text('Take a Photo'),
+              onTap: () => Navigator.pop(sheetContext, 'camera'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library_outlined),
+              title: const Text('Choose from Gallery'),
+              onTap: () => Navigator.pop(sheetContext, 'gallery'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.delete_outline, color: PsEvColors.red),
+              title: const Text('Remove Photo', style: TextStyle(color: PsEvColors.red)),
+              onTap: () => Navigator.pop(sheetContext, 'remove'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (choice == null) return;
+
+    if (choice == 'remove') {
+      await ProfilePhotoService.removePhoto(uid);
+      return;
+    }
+
+    final source = choice == 'camera' ? ImageSource.camera : ImageSource.gallery;
+    try {
+      await ProfilePhotoService.pickAndSave(uid, source: source);
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not update your photo: $e'), backgroundColor: PsEvColors.red),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthService>();
+    final app = context.watch<AppState>();
     final partnerService = context.watch<PartnerService>();
+    final uid = app.currentUserId;
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('My Profile'),
@@ -67,16 +124,44 @@ class ProfileScreen extends StatelessWidget {
               padding: const EdgeInsets.all(18),
               child: Column(
                 children: [
-                  CircleAvatar(
-                    radius: 38,
-                    backgroundColor: PsEvColors.emerald,
-                    child: Text(
-                      auth.initials,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 24,
-                        fontWeight: FontWeight.w800,
-                      ),
+                  GestureDetector(
+                    onTap: uid == null ? null : () => _showChangePhotoSheet(context, uid),
+                    child: Stack(
+                      children: [
+                        uid == null
+                            ? _avatarInitialsOnly(auth)
+                            : StreamBuilder<Uint8List?>(
+                                stream: ProfilePhotoService.watch(uid),
+                                builder: (context, snapshot) {
+                                  final bytes = snapshot.data;
+                                  return CircleAvatar(
+                                    radius: 38,
+                                    backgroundColor: PsEvColors.emerald,
+                                    backgroundImage: bytes != null ? MemoryImage(bytes) : null,
+                                    child: bytes == null
+                                        ? Text(
+                                            auth.initials,
+                                            style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.w800),
+                                          )
+                                        : null,
+                                  );
+                                },
+                              ),
+                        Positioned(
+                          bottom: 0,
+                          right: 0,
+                          child: Container(
+                            width: 26,
+                            height: 26,
+                            decoration: BoxDecoration(
+                              color: PsEvColors.emerald,
+                              shape: BoxShape.circle,
+                              border: Border.all(color: Colors.white, width: 2),
+                            ),
+                            child: const Icon(Icons.camera_alt, color: Colors.white, size: 13),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                   const SizedBox(height: 10),
@@ -90,8 +175,8 @@ class ProfileScreen extends StatelessWidget {
                       style: const TextStyle(fontSize: 12, color: PsEvColors.mutedText),
                     ),
                   if (partnerService.isPartner)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 6),
+                    const Padding(
+                      padding: EdgeInsets.only(top: 6),
                       child: PsEvTag(label: 'Installation Partner'),
                     ),
                 ],
@@ -148,7 +233,7 @@ class ProfileScreen extends StatelessWidget {
                   icon: Icons.home_work_outlined,
                   iconColor: PsEvColors.blue,
                   title: 'Home Installation & Equipment',
-                  subtitle: 'Request a home install, or borrow/buy cables & adaptors',
+                  subtitle: 'Check equipment, or request a home service',
                   onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const HomeInstallationScreen())),
                   isLast: true,
                 ),
@@ -156,11 +241,6 @@ class ProfileScreen extends StatelessWidget {
             ),
           ),
 
-          // -----------------------------------------------------------
-          // Partner Jobs - only shown to signed-in users who are
-          // registered installation partners (a doc exists at
-          // installPartners/{uid}). Everyone else never sees this row.
-          // -----------------------------------------------------------
           if (partnerService.isPartner) ...[
             const SizedBox(height: 12),
             const Padding(
@@ -172,7 +252,7 @@ class ProfileScreen extends StatelessWidget {
                 icon: Icons.build_circle_outlined,
                 iconColor: PsEvColors.emerald,
                 title: 'Partner Jobs',
-                subtitle: 'Accept open installation requests and manage your jobs',
+                subtitle: 'Accept open service requests and manage your jobs',
                 onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PartnerJobsScreen())),
                 isLast: true,
               ),
@@ -181,11 +261,6 @@ class ProfileScreen extends StatelessWidget {
 
           const SizedBox(height: 12),
 
-          // -----------------------------------------------------------
-          // Account Settings now lives as a row here, same pattern as
-          // every item above, instead of an inline form directly on
-          // this page.
-          // -----------------------------------------------------------
           const Padding(
             padding: EdgeInsets.only(left: 4, bottom: 8),
             child: Text('Settings', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: PsEvColors.mutedText)),
@@ -199,6 +274,14 @@ class ProfileScreen extends StatelessWidget {
                   title: 'Account Settings',
                   subtitle: 'Name, email, and phone number',
                   onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AccountSettingsScreen())),
+                ),
+                const Divider(height: 1),
+                _ProfileRow(
+                  icon: Icons.support_agent_outlined,
+                  iconColor: PsEvColors.emerald,
+                  title: 'Contact Support',
+                  subtitle: 'Email, phone, and WhatsApp',
+                  onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ContactSupportScreen())),
                 ),
                 const Divider(height: 1),
                 _ProfileRow(
@@ -241,6 +324,17 @@ class ProfileScreen extends StatelessWidget {
             ),
           ],
         ],
+      ),
+    );
+  }
+
+  Widget _avatarInitialsOnly(AuthService auth) {
+    return CircleAvatar(
+      radius: 38,
+      backgroundColor: PsEvColors.emerald,
+      child: Text(
+        auth.initials,
+        style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.w800),
       ),
     );
   }

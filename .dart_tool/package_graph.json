@@ -16,7 +16,6 @@
         "image_picker",
         "intl",
         "latlong2",
-        "mobile_scanner",
         "provider",
         "qr_flutter",
         "url_launcher",
@@ -166,16 +165,6 @@
         "clock",
         "meta",
         "path"
-      ]
-    },
-    {
-      "name": "mobile_scanner",
-      "version": "5.2.3",
-      "dependencies": [
-        "flutter",
-        "flutter_web_plugins",
-        "plugin_platform_interface",
-        "web"
       ]
     },
     {
@@ -604,25 +593,6 @@
       ]
     },
     {
-      "name": "web",
-      "version": "1.1.1",
-      "dependencies": []
-    },
-    {
-      "name": "plugin_platform_interface",
-      "version": "2.1.8",
-      "dependencies": [
-        "meta"
-      ]
-    },
-    {
-      "name": "flutter_web_plugins",
-      "version": "0.0.0",
-      "dependencies": [
-        "flutter"
-      ]
-    },
-    {
       "name": "qr",
       "version": "3.0.2",
       "dependencies": [
@@ -703,6 +673,18 @@
       ]
     },
     {
+      "name": "plugin_platform_interface",
+      "version": "2.1.8",
+      "dependencies": [
+        "meta"
+      ]
+    },
+    {
+      "name": "web",
+      "version": "1.1.1",
+      "dependencies": []
+    },
+    {
       "name": "http_parser",
       "version": "4.1.2",
       "dependencies": [
@@ -710,6 +692,13 @@
         "source_span",
         "string_scanner",
         "typed_data"
+      ]
+    },
+    {
+      "name": "flutter_web_plugins",
+      "version": "0.0.0",
+      "dependencies": [
+        "flutter"
       ]
     },
     {

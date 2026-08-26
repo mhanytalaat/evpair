@@ -1,6 +1,16 @@
 import 'enums.dart';
 import '../services/pricing_service.dart';
 
+/// Grace period after the booked end time before an overstay penalty
+/// starts accruing. Covers realistic cases like walking back to the car.
+const int kOverstayGraceMinutes = 15;
+
+/// Flat per-minute penalty (EGP) charged once a session is stopped more
+/// than kOverstayGraceMinutes after the originally booked end time.
+/// Models a driver leaving the car parked/plugged in well past their
+/// reserved window, which blocks the next driver from using the station.
+const double kOverstayPenaltyPerMinute = 2.0;
+
 class Booking {
   final String id;
   final String driverId;
@@ -23,26 +33,31 @@ class Booking {
   final PricingModel pricingModel;
   final double price;
   final double powerKw;
-
   final double heldAmount;
-
   final String? chargerMapLink;
   final double chargerLatitude;
   final double chargerLongitude;
 
   BookingStatus status;
-
   bool walletHeld;
   bool hostApproved;
-
   String? qrCodePayload;
   DateTime? qrScannedAt;
-
   DateTime? sessionStartedAt;
   DateTime? sessionEndedAt;
-
   double? actualCost;
   Duration? actualDuration;
+
+  /// How many minutes past (requestedEnd + kOverstayGraceMinutes) the
+  /// session was actually stopped, or 0 if stopped on time. Set by
+  /// completeAndSettle().
+  int? overstayMinutes;
+
+  /// Penalty charged for the overstay above, in EGP. Set by
+  /// completeAndSettle(). This is charged separately from actualCost/the
+  /// wallet hold, since the held amount only ever covers the originally
+  /// booked duration.
+  double? overstayPenalty;
 
   Booking({
     required this.id,
@@ -117,11 +132,9 @@ class Booking {
   bool validateScan(String scannedPayload, DateTime now) {
     if (status != BookingStatus.confirmed) return false;
     if (scannedPayload != qrCodePayload) return false;
-
     final graceBefore = requestedStart.subtract(const Duration(minutes: 15));
     final graceAfter = requestedEnd.add(const Duration(minutes: 15));
     if (now.isBefore(graceBefore) || now.isAfter(graceAfter)) return false;
-
     qrScannedAt = now;
     sessionStartedAt = now;
     status = BookingStatus.inProgress;
@@ -132,7 +145,6 @@ class Booking {
     if (status != BookingStatus.confirmed) return false;
     final earliestStart = requestedStart.subtract(const Duration(minutes: 15));
     if (now.isBefore(earliestStart)) return false;
-
     sessionStartedAt = now;
     status = BookingStatus.inProgress;
     return true;
@@ -142,7 +154,6 @@ class Booking {
     sessionEndedAt = now;
     final elapsed = now.difference(sessionStartedAt ?? now);
     actualDuration = elapsed;
-
     final rawCost = PricingService.computeCost(
       model: pricingModel,
       price: price,
@@ -151,8 +162,22 @@ class Booking {
     );
     final cappedCost = rawCost > heldAmount ? heldAmount : (rawCost < 0 ? 0.0 : rawCost);
     actualCost = cappedCost;
-    status = BookingStatus.completed;
 
+    // Overstay penalty: if the session is stopped more than the grace
+    // period after the originally booked end time, charge a flat
+    // per-minute penalty. This is separate from actualCost/heldAmount
+    // because those only ever cover the booked duration - there is no
+    // wallet hold covering extra time the driver wasn't supposed to use.
+    final lateBy = now.difference(requestedEnd).inMinutes;
+    if (lateBy > kOverstayGraceMinutes) {
+      overstayMinutes = lateBy - kOverstayGraceMinutes;
+      overstayPenalty = (overstayMinutes! * kOverstayPenaltyPerMinute).roundToDouble();
+    } else {
+      overstayMinutes = 0;
+      overstayPenalty = 0;
+    }
+
+    status = BookingStatus.completed;
     return heldAmount - cappedCost;
   }
 }
