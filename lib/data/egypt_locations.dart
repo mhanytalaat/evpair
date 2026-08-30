@@ -7,14 +7,23 @@
 /// consistent - a host picking "Cairo" / "New Cairo" for their charger
 /// will always match a driver filtering by "Cairo" / "New Cairo".
 ///
-/// Priority locations (Cairo, Giza, North Coast) are listed first since
-/// they're EVPair's primary coverage area; the rest are ordered
-/// alphabetically by governorate, exactly as provided.
+/// NOTE ON FIRESTORE (item #2 of the 30/8 update): this file still ships
+/// a bundled SEED list (`kSeedEgyptGovernorates` /
+/// `kSeedGovernorateCoordinates`) so the app always has data even before
+/// any network call completes. The values actually shown in the app are
+/// the LIVE ones below (`kEgyptGovernorates` / `kGovernorateCoordinates`),
+/// which start out equal to the seed list but get replaced with whatever
+/// is in the Firestore `governorates` collection once
+/// `LocationsService.hydrate()` runs (see services/locations_service.dart
+/// and the call added in main.dart). On the very first run ever (empty
+/// collection), LocationsService seeds Firestore FROM this file, so no
+/// manual data entry is needed to get started - after that, editing a
+/// governorate's `areas` array (or adding a new governorate document) in
+/// the Firebase console updates every user's picker with no app release.
 class EgyptGovernorate {
   final String name;
   final List<String> areas;
   final bool isPriority;
-
   const EgyptGovernorate({
     required this.name,
     required this.areas,
@@ -22,7 +31,7 @@ class EgyptGovernorate {
   });
 }
 
-const List<EgyptGovernorate> kEgyptGovernorates = [
+const List<EgyptGovernorate> kSeedEgyptGovernorates = [
   // ---------------------------------------------------------------
   // PRIORITY LOCATIONS
   // ---------------------------------------------------------------
@@ -124,7 +133,6 @@ const List<EgyptGovernorate> kEgyptGovernorates = [
       'El Alamein',
     ],
   ),
-
   // ---------------------------------------------------------------
   // ALL OTHER GOVERNORATES (alphabetical)
   // ---------------------------------------------------------------
@@ -191,31 +199,13 @@ const List<EgyptGovernorate> kEgyptGovernorates = [
   ]),
 ];
 
-List<String> get kAllGovernorateNames => kEgyptGovernorates.map((g) => g.name).toList();
-
-List<String> areasFor(String? governorate) {
-  if (governorate == null) return const [];
-  for (final g in kEgyptGovernorates) {
-    if (g.name == governorate) return g.areas;
-  }
-  return const [];
-}
-
-bool isKnownGovernorate(String? name) => name != null && kAllGovernorateNames.contains(name);
-
-bool isKnownArea(String? governorate, String? area) =>
-    area != null && areasFor(governorate).contains(area);
-
 /// Approximate center point for each governorate/region, used to place a
-/// new charger's map pin when the host hasn't pasted an exact Maps link
-/// (see ChargerFormScreen._resolveCoordinates). A small random jitter
+/// new charger's map pin when the host hasn't picked an exact pin (see
+/// ChargerFormScreen._resolveCoordinates). A small random jitter
 /// (jitterOffsetFor in state/app_state.dart) is applied on top so
 /// multiple chargers in the same governorate don't all stack on the
-/// exact same point. This replaces the old area-level kAreaCoordinates
-/// map in app_state.dart, which only covered a handful of areas and used
-/// different city/area names than this curated list - a common source
-/// of drivers and hosts seeing mismatched location filters.
-const Map<String, ({double lat, double lng})> kGovernorateCoordinates = {
+/// exact same point.
+const Map<String, ({double lat, double lng})> kSeedGovernorateCoordinates = {
   'Cairo': (lat: 30.0444, lng: 31.2357),
   'Giza': (lat: 30.0131, lng: 31.2089),
   'North Coast (Matrouh)': (lat: 30.8481, lng: 28.9540),
@@ -245,3 +235,44 @@ const Map<String, ({double lat, double lng})> kGovernorateCoordinates = {
   'South Sinai': (lat: 28.3428, lng: 33.9330),
   'Suez': (lat: 29.9668, lng: 32.5498),
 };
+
+// ---------------------------------------------------------------------
+// LIVE data - starts out equal to the seed lists above, and is replaced
+// wholesale by LocationsService.hydrate() once Firestore data loads (see
+// services/locations_service.dart). Every existing call site in the app
+// (LocationPickerField, ChargerFormScreen, etc.) keeps using the SAME
+// names (`kEgyptGovernorates`, `kGovernorateCoordinates`) as before, so
+// this is a drop-in change - no other file needs to import Firestore
+// directly.
+// ---------------------------------------------------------------------
+List<EgyptGovernorate> _liveGovernorates = List.of(kSeedEgyptGovernorates);
+Map<String, ({double lat, double lng})> _liveGovernorateCoordinates = Map.of(kSeedGovernorateCoordinates);
+
+List<EgyptGovernorate> get kEgyptGovernorates => _liveGovernorates;
+Map<String, ({double lat, double lng})> get kGovernorateCoordinates => _liveGovernorateCoordinates;
+
+/// Called by LocationsService once Firestore data has loaded (or been
+/// seeded). Only overwrites a list if it's non-empty, so a transient
+/// Firestore read failure never blanks out the picker.
+void applyLiveGovernorates(
+  List<EgyptGovernorate> governorates,
+  Map<String, ({double lat, double lng})> coordinates,
+) {
+  if (governorates.isNotEmpty) _liveGovernorates = governorates;
+  if (coordinates.isNotEmpty) _liveGovernorateCoordinates = coordinates;
+}
+
+List<String> get kAllGovernorateNames => kEgyptGovernorates.map((g) => g.name).toList();
+
+List<String> areasFor(String? governorate) {
+  if (governorate == null) return const [];
+  for (final g in kEgyptGovernorates) {
+    if (g.name == governorate) return g.areas;
+  }
+  return const [];
+}
+
+bool isKnownGovernorate(String? name) => name != null && kAllGovernorateNames.contains(name);
+
+bool isKnownArea(String? governorate, String? area) =>
+    area != null && areasFor(governorate).contains(area);

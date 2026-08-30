@@ -17,11 +17,26 @@ class HostHomeScreen extends StatefulWidget {
 }
 
 class _HostHomeScreenState extends State<HostHomeScreen> {
+  /// Confirms to the host, right on this screen, that their new station
+  /// actually saved and is now visible to drivers - there was previously
+  /// no feedback at all after tapping Save Charger other than the screen
+  /// just closing. ChargerFormScreen now pops with the string 'added' or
+  /// 'updated' (instead of a plain bool) so this screen can show the
+  /// right message for each case.
   Future<void> _onAddChargerTap(BuildContext context) async {
     final ok = await ensureRegistered(context);
     if (!ok || !context.mounted) return;
-    await Navigator.push(context, MaterialPageRoute(builder: (_) => const ChargerFormScreen()));
+    final result = await Navigator.push<String>(context, MaterialPageRoute(builder: (_) => const ChargerFormScreen()));
+    if (!mounted) return;
     setState(() {});
+    if (result == 'added' && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('✅ Station added and now visible to drivers on the map.'),
+          backgroundColor: PsEvColors.emerald,
+        ),
+      );
+    }
   }
 
   @override

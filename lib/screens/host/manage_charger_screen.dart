@@ -30,7 +30,6 @@ import 'charger_form_screen.dart';
 class ManageChargerScreen extends StatefulWidget {
   final ChargerProfile charger;
   const ManageChargerScreen({super.key, required this.charger});
-
   @override
   State<ManageChargerScreen> createState() => _ManageChargerScreenState();
 }
@@ -123,6 +122,9 @@ class _ManageChargerScreenState extends State<ManageChargerScreen> {
     // opening the app), because it only ever existed on this in-memory
     // ChargerProfile instance.
     context.read<AppState>().updateCharger(ch);
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('✅ Free window added.'), backgroundColor: PsEvColors.emerald),
+    );
   }
 
   void _addRecurringSlots() {
@@ -169,17 +171,23 @@ class _ManageChargerScreenState extends State<ManageChargerScreen> {
     // Persist the batch of recurring windows to Firestore - see note above.
     context.read<AppState>().updateCharger(ch);
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Added ${newSlots.length} recurring slot(s).'), backgroundColor: PsEvColors.emerald),
+      SnackBar(content: Text('✅ Added ${newSlots.length} recurring slot(s).'), backgroundColor: PsEvColors.emerald),
     );
   }
 
   Future<void> _openEdit() async {
     final ok = await ensureRegistered(context);
     if (!ok || !context.mounted) return;
-    // ChargerFormScreen persists the edit (via AppState.updateCharger) on
-    // save, so we just need to rebuild this screen with the updated data.
-    await Navigator.push(context, MaterialPageRoute(builder: (_) => ChargerFormScreen(existing: widget.charger)));
+    // ChargerFormScreen pops with 'updated' on a successful save so we
+    // can confirm the edit actually went through.
+    final result = await Navigator.push<String>(context, MaterialPageRoute(builder: (_) => ChargerFormScreen(existing: widget.charger)));
+    if (!mounted) return;
     setState(() {});
+    if (result == 'updated' && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('✅ Charger details saved.'), backgroundColor: PsEvColors.emerald),
+      );
+    }
   }
 
   Widget _weekdayChip(Weekday w) {
@@ -479,7 +487,6 @@ class _ManageChargerScreenState extends State<ManageChargerScreen> {
   }
 }
 
-
 class _DriverAndCarInfo extends StatelessWidget {
   final Booking booking;
   const _DriverAndCarInfo({required this.booking});
@@ -499,7 +506,7 @@ class _DriverAndCarInfo extends StatelessWidget {
         }
         return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text('Driver: $name', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-          if (phone != null && phone!.trim().isNotEmpty) Text('Mobile: $phone', style: const TextStyle(color: PsEvColors.mutedText, fontSize: 11)),
+          if (phone != null && phone.trim().isNotEmpty) Text('Mobile: $phone', style: const TextStyle(color: PsEvColors.mutedText, fontSize: 11)),
           Text('Car: ${booking.carBrand} ${booking.carModel}', style: const TextStyle(color: PsEvColors.slateText, fontSize: 12, fontWeight: FontWeight.w600)),
           Text('Plate: ${booking.carPlateNumber}', style: const TextStyle(color: PsEvColors.emerald, fontSize: 12, fontWeight: FontWeight.w800)),
           Text('${booking.carChargingStandard} • ${booking.carConnector} • ${booking.carMaxAmpere.toStringAsFixed(0)}A', style: const TextStyle(color: PsEvColors.mutedText, fontSize: 11)),

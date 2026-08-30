@@ -1,12 +1,14 @@
 import 'dart:async';
 import 'dart:ui';
-
 import 'package:provider/provider.dart';
 import 'services/booking_service.dart';
 import 'services/wallet_service.dart';
 import 'services/auth_service.dart';
 import 'services/partner_service.dart';
 import 'services/rating_service.dart';
+import 'services/locations_service.dart';
+import 'services/power_options_service.dart';
+import 'services/car_models_service.dart';
 import 'state/app_state.dart';
 import 'theme/ps_ev_theme.dart';
 import 'screens/root/app_root.dart';
@@ -29,49 +31,51 @@ Future<void> main() async {
   // project level, not in this file.
   runZonedGuarded(() async {
     WidgetsFlutterBinding.ensureInitialized();
-
     FlutterError.onError = (FlutterErrorDetails details) {
       FlutterError.presentError(details);
       debugPrint('Flutter framework error: ${details.exception}');
       debugPrint(details.stack.toString());
     };
-
     PlatformDispatcher.instance.onError = (error, stack) {
       debugPrint('Platform error: $error');
       debugPrint(stack.toString());
       return true;
     };
-
     try {
       await Firebase.initializeApp(
         options: DefaultFirebaseOptions.currentPlatform,
       );
-
       final walletService = WalletService();
-
       final authService = AuthService();
       await authService.tryAutoSignIn();
-
       final appState = AppState();
       if (authService.uid != null) {
         appState.currentUserId = authService.uid;
       }
+      // Governorates/areas live in Firestore (auto-seeded from the
+      // bundled list on first run) - see services/locations_service.dart.
+      final locationsService = LocationsService();
+      await locationsService.hydrate();
+      // kW options in Firestore: same auto-seed-then-read-live pattern -
+      // see services/power_options_service.dart.
+      final powerOptionsService = PowerOptionsService();
+      await powerOptionsService.hydrate();
+      // Car brand/model options in Firestore: same pattern again - see
+      // services/car_models_service.dart.
+      final carModelsService = CarModelsService();
+      await carModelsService.hydrate();
       await appState.hydrateFromFirestore();
-
       if (authService.uid != null) {
         await walletService.hydrateFromFirestore(authService.uid!);
       }
-
       final partnerService = PartnerService(walletService: walletService);
       if (authService.uid != null) {
         await partnerService.hydrate(authService.uid!);
       }
-
       final ratingService = RatingService();
       if (authService.uid != null) {
         await ratingService.hydrate(authService.uid!);
       }
-
       runApp(
         MultiProvider(
           providers: [
@@ -83,6 +87,9 @@ Future<void> main() async {
             ChangeNotifierProvider<AuthService>.value(value: authService),
             ChangeNotifierProvider<PartnerService>.value(value: partnerService),
             ChangeNotifierProvider<RatingService>.value(value: ratingService),
+            ChangeNotifierProvider<LocationsService>.value(value: locationsService),
+            ChangeNotifierProvider<PowerOptionsService>.value(value: powerOptionsService),
+            ChangeNotifierProvider<CarModelsService>.value(value: carModelsService),
           ],
           child: const EvPairApp(),
         ),
@@ -100,7 +107,6 @@ Future<void> main() async {
 
 class EvPairApp extends StatelessWidget {
   const EvPairApp({super.key});
-
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
@@ -124,7 +130,6 @@ class EvPairApp extends StatelessWidget {
 class StartupFailureApp extends StatelessWidget {
   final String error;
   const StartupFailureApp({super.key, required this.error});
-
   @override
   Widget build(BuildContext context) {
     return MaterialApp(

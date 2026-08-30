@@ -1,16 +1,18 @@
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../services/auth_service.dart';
+import '../../utils/phone_number_validator.dart';
 import '../../theme/ps_ev_theme.dart';
 import '../../theme/ps_ev_app_bar.dart';
 import '../../state/app_state.dart';
 import '../../state/country_codes.dart';
+import '../legal/legal_document_screen.dart';
 import 'sign_in_screen.dart';
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
-
   @override
   State<RegisterScreen> createState() => _RegisterScreenState();
 }
@@ -26,10 +28,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
   bool _submitting = false;
   String? _error;
   bool _obscurePassword = true;
-
   // Country dial code for the phone number, defaulting to Egypt. Israel is
   // intentionally excluded from kCountryDialCodes.
   String _countryCode = '+20';
+  // Item #5: must be checked before registration can proceed.
+  bool _agreedToTerms = false;
 
   @override
   void dispose() {
@@ -42,18 +45,45 @@ class _RegisterScreenState extends State<RegisterScreen> {
     super.dispose();
   }
 
+  void _openLegalDoc(String documentId, String title) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => LegalDocumentScreen(documentId: documentId, title: title)),
+    );
+  }
+
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
+    // Item #5: block registration until Terms & Privacy are accepted.
+    if (!_agreedToTerms) {
+      setState(() => _error = 'Please agree to the Terms & Conditions and Privacy Policy to continue.');
+      return;
+    }
     setState(() {
       _submitting = true;
       _error = null;
     });
     try {
+      // Item #1: combine the country code with the typed local number
+      // WITHOUT the redundant leading 0 (e.g. "+20" + "1001234567", not
+      // "+20" + "01001234567").
+      final normalizedPhone = PhoneNumberValidator.toE164(_phoneCtrl.text, countryCode: _countryCode);
+      // Item #6: reject duplicate phone numbers up front (email
+      // duplicates are already rejected natively by Firebase Auth's
+      // createUserWithEmailAndPassword below, via 'email-already-in-use').
+      final phoneTaken = await context.read<AuthService>().isPhoneNumberTaken(normalizedPhone);
+      if (phoneTaken) {
+        setState(() {
+          _error = 'This phone number is already registered. Please sign in instead.';
+          _submitting = false;
+        });
+        return;
+      }
       await context.read<AuthService>().register(
             firstName: _firstNameCtrl.text.trim(),
             lastName: _lastNameCtrl.text.trim(),
             email: _emailCtrl.text.trim(),
-            phone: '$_countryCode${_phoneCtrl.text.trim()}',
+            phone: normalizedPhone,
             password: _passwordCtrl.text,
           );
       if (!mounted) return;
@@ -149,11 +179,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
                               keyboardType: TextInputType.phone,
                               maxLength: 11,
                               decoration: const InputDecoration(counterText: '', hintText: '01xxxxxxxxx'),
-                              validator: (v) {
-                                if (v == null || v.trim().isEmpty) return 'Enter your mobile number';
-                                if (!RegExp(r'^\d{11}$').hasMatch(v.trim())) return 'Must be exactly 11 digits';
-                                return null;
-                              },
+                              // Item #1: validated per the selected country
+                              // code - the leading 0 is expected here (as
+                              // typed), and is stripped only when combined
+                              // with the country code for storage (see
+                              // PhoneNumberValidator.toE164 in _submit()).
+                              validator: (v) => PhoneNumberValidator.validate(v, countryCode: _countryCode),
                             ),
                           ),
                         ],
@@ -179,6 +210,50 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         controller: _confirmPasswordCtrl,
                         obscureText: _obscurePassword,
                         validator: (v) => (v != _passwordCtrl.text) ? 'Passwords do not match' : null,
+                      ),
+                      // ---------------------------------------------
+                      // Item #5: Terms & Conditions / Privacy Policy
+                      // agreement checkbox, required before registering.
+                      // Both links are underlined and open the live
+                      // Firestore-backed legal document screen.
+                      // ---------------------------------------------
+                      const SizedBox(height: 14),
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Checkbox(
+                            value: _agreedToTerms,
+                            activeColor: PsEvColors.emerald,
+                            onChanged: (v) => setState(() => _agreedToTerms = v ?? false),
+                          ),
+                          Expanded(
+                            child: Padding(
+                              padding: const EdgeInsets.only(top: 12),
+                              child: RichText(
+                                text: TextSpan(
+                                  style: const TextStyle(fontSize: 12, color: PsEvColors.slateText),
+                                  children: [
+                                    const TextSpan(text: 'I agree to the '),
+                                    TextSpan(
+                                      text: 'Terms & Conditions',
+                                      style: const TextStyle(color: PsEvColors.emerald, decoration: TextDecoration.underline, fontWeight: FontWeight.w600),
+                                      recognizer: TapGestureRecognizer()
+                                        ..onTap = () => _openLegalDoc('termsAndConditions', 'Terms & Conditions'),
+                                    ),
+                                    const TextSpan(text: ' and '),
+                                    TextSpan(
+                                      text: 'Privacy Policy',
+                                      style: const TextStyle(color: PsEvColors.emerald, decoration: TextDecoration.underline, fontWeight: FontWeight.w600),
+                                      recognizer: TapGestureRecognizer()
+                                        ..onTap = () => _openLegalDoc('privacyPolicy', 'Privacy Policy'),
+                                    ),
+                                    const TextSpan(text: '.'),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                       if (_error != null) ...[
                         const SizedBox(height: 12),

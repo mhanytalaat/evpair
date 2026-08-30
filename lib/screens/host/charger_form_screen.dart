@@ -1,9 +1,12 @@
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
+import 'package:uuid/uuid.dart';
 import '../../state/app_state.dart';
 import '../../models/charger_profile.dart';
+import '../../models/availability_slot.dart';
 import '../../models/enums.dart';
 import '../../services/auth_service.dart';
 import '../../services/pricing_service.dart';
@@ -11,6 +14,7 @@ import '../../data/egypt_locations.dart';
 import '../../theme/ps_ev_theme.dart';
 import '../../theme/ps_ev_app_bar.dart';
 import '../shared/location_picker_field.dart';
+import 'pick_location_on_map_screen.dart';
 
 ({double lat, double lng})? tryParseLatLngFromMapLink(String? link) {
   if (link == null || link.trim().isEmpty) return null;
@@ -23,31 +27,32 @@ import '../shared/location_picker_field.dart';
   return (lat: lat, lng: lng);
 }
 
+/// A brand-new charger MUST have at least one free charging window
+/// added before it can be saved - there is NO auto-seeded default
+/// window. The add-window form below is embedded directly in this
+/// screen (same one-time/recurring pattern used in ManageChargerScreen)
+/// and never pre-fills a date or time - the host must explicitly pick
+/// every value themselves.
+///
+/// Once the charger exists, further changes to its free windows (adding
+/// more later, or deleting any) are done from Manage Charger, reached by
+/// tapping the station in the host's charger list - see
+/// ManageChargerScreen's existing "+ Add free window" section, which is
+/// unchanged.
 class ChargerFormScreen extends StatefulWidget {
   final ChargerProfile? existing;
   const ChargerFormScreen({super.key, this.existing});
-
   @override
   State<ChargerFormScreen> createState() => _ChargerFormScreenState();
 }
 
 class _ChargerFormScreenState extends State<ChargerFormScreen> {
+  final _uuid = const Uuid();
   late TextEditingController _nameCtrl;
   late TextEditingController _mapLinkCtrl;
   late TextEditingController _priceCtrl;
-
-  // City/Area now use the shared curated Egypt location list (see
-  // data/egypt_locations.dart), the exact same source
-  // DriverHomeScreen's filter and the Home Installation & Equipment
-  // request form use. This guarantees a host's charger and a driver's
-  // filter always use identical spelling - previously this screen used
-  // a separate, smaller kCityOptions/kCityAreaOptions list (from
-  // state/app_state.dart) with different city/area names entirely,
-  // which meant a charger's stored city/area could never actually match
-  // what a driver was filtering by.
   String? _city;
   String? _area;
-
   late double _power;
   late double _ampere;
   late PricingModel _pricingModel;
@@ -57,9 +62,24 @@ class _ChargerFormScreenState extends State<ChargerFormScreen> {
   late ConnectorType _connector;
   Uint8List? _photoBytes;
   String? _priceError;
-
+  bool _submitting = false;
   bool get isEditing => widget.existing != null;
   late final String _pendingChargerId;
+
+  double? _pickedLat;
+  double? _pickedLng;
+
+  // Free charging windows - REQUIRED (at least one) for a brand-new
+  // charger, with NO default date/time ever pre-filled.
+  final List<AvailabilitySlot> _pendingSlots = [];
+  bool _showAddSlotForm = false;
+  bool _repeatWeekly = false;
+  DateTime? _slotDate;
+  TimeOfDay? _slotStart;
+  TimeOfDay? _slotEnd;
+  final Set<Weekday> _selectedWeekdays = {};
+  DateTime? _repeatFrom;
+  int _repeatWeeks = 4;
 
   @override
   void initState() {
@@ -69,16 +89,9 @@ class _ChargerFormScreenState extends State<ChargerFormScreen> {
     _nameCtrl = TextEditingController(text: e?.label ?? 'My Home Charger');
     _mapLinkCtrl = TextEditingController(text: e?.mapLink ?? '');
     _priceCtrl = TextEditingController(text: e?.price.toString() ?? '');
-
-    // Only carry over the existing charger's city/area if they're still
-    // present in the curated list - an older charger saved under the
-    // previous (different) city/area names will start blank here and
-    // the host will need to re-pick from the new list once, which also
-    // has the side effect of automatically fixing that mismatch.
     _city = (e != null && isKnownGovernorate(e.city)) ? e.city : null;
     _area = (e != null && isKnownArea(_city, e.area)) ? e.area : null;
-
-    _power = e?.powerKw ?? kPowerOptions[3];
+    _power = (e != null && kPowerOptions.contains(e.powerKw)) ? e.powerKw : kPowerOptions.first;
     _ampere = e?.ampere ?? kAmpereOptions[1];
     _pricingModel = e?.pricingModel ?? PricingModel.perMinute;
     _residentsOnly = e?.residentsOnly ?? false;
@@ -87,6 +100,10 @@ class _ChargerFormScreenState extends State<ChargerFormScreen> {
     _chargingStandard = e?.chargingStandard ?? ChargingStandard.europeanCcs2;
     final validConnectors = _chargingStandard.compatibleConnectors;
     _connector = (e != null && validConnectors.contains(e.connector)) ? e.connector : validConnectors.first;
+    if (e != null) {
+      _pickedLat = e.latitude;
+      _pickedLng = e.longitude;
+    }
   }
 
   Future<void> _pickPhoto() async {
@@ -140,7 +157,28 @@ class _ChargerFormScreenState extends State<ChargerFormScreen> {
     });
   }
 
+  Future<void> _openMapPicker() async {
+    final start = (_pickedLat != null && _pickedLng != null)
+        ? (lat: _pickedLat!, lng: _pickedLng!)
+        : (kGovernorateCoordinates[_city] ?? kGovernorateCoordinates['Cairo']!);
+    final result = await Navigator.push<({double lat, double lng})>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => PickLocationOnMapScreen(initialLat: start.lat, initialLng: start.lng),
+      ),
+    );
+    if (result != null && mounted) {
+      setState(() {
+        _pickedLat = result.lat;
+        _pickedLng = result.lng;
+      });
+    }
+  }
+
   ({double lat, double lng}) _resolveCoordinates() {
+    if (_pickedLat != null && _pickedLng != null) {
+      return (lat: _pickedLat!, lng: _pickedLng!);
+    }
     final fromLink = tryParseLatLngFromMapLink(_mapLinkCtrl.text);
     if (fromLink != null) return fromLink;
     final govCenter = kGovernorateCoordinates[_city];
@@ -151,14 +189,136 @@ class _ChargerFormScreenState extends State<ChargerFormScreen> {
     if (widget.existing != null) {
       return (lat: widget.existing!.latitude, lng: widget.existing!.longitude);
     }
-    // Fallback if somehow no governorate matched yet - Cairo center.
     return kGovernorateCoordinates['Cairo']!;
+  }
+
+  Future<void> _pickSlotDate() async {
+    final now = DateTime.now();
+    final picked = await showDatePicker(context: context, initialDate: now, firstDate: now, lastDate: now.add(const Duration(days: 60)));
+    if (picked != null) setState(() => _slotDate = picked);
+  }
+
+  Future<void> _pickRepeatFrom() async {
+    final now = DateTime.now();
+    final picked = await showDatePicker(context: context, initialDate: now, firstDate: now, lastDate: now.add(const Duration(days: 60)));
+    if (picked != null) setState(() => _repeatFrom = picked);
+  }
+
+  Future<void> _pickSlotStart() async {
+    final picked = await showTimePicker(context: context, initialTime: TimeOfDay.now());
+    if (picked != null) setState(() => _slotStart = picked);
+  }
+
+  Future<void> _pickSlotEnd() async {
+    final picked = await showTimePicker(context: context, initialTime: TimeOfDay.now());
+    if (picked != null) setState(() => _slotEnd = picked);
+  }
+
+  void _resetSlotForm() {
+    _showAddSlotForm = false;
+    _repeatWeekly = false;
+    _slotDate = null;
+    _slotStart = null;
+    _slotEnd = null;
+    _selectedWeekdays.clear();
+    _repeatFrom = null;
+    _repeatWeeks = 4;
+  }
+
+  void _addOneTimeSlotPending() {
+    if (_slotDate == null || _slotStart == null || _slotEnd == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please fill in date, start time, and end time.'), backgroundColor: PsEvColors.red),
+      );
+      return;
+    }
+    final start = DateTime(_slotDate!.year, _slotDate!.month, _slotDate!.day, _slotStart!.hour, _slotStart!.minute);
+    final end = DateTime(_slotDate!.year, _slotDate!.month, _slotDate!.day, _slotEnd!.hour, _slotEnd!.minute);
+    if (!end.isAfter(start)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('End time must be after start time.'), backgroundColor: PsEvColors.red),
+      );
+      return;
+    }
+    setState(() {
+      _pendingSlots.add(AvailabilitySlot(id: _uuid.v4(), chargerId: _pendingChargerId, start: start, end: end));
+      _resetSlotForm();
+    });
+  }
+
+  void _addRecurringSlotsPending() {
+    if (_selectedWeekdays.isEmpty || _slotStart == null || _slotEnd == null || _repeatFrom == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please pick at least one weekday, a start date, and start/end times.'), backgroundColor: PsEvColors.red),
+      );
+      return;
+    }
+    if (!(_slotEnd!.hour * 60 + _slotEnd!.minute > _slotStart!.hour * 60 + _slotStart!.minute)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('End time must be after start time.'), backgroundColor: PsEvColors.red),
+      );
+      return;
+    }
+    final newSlots = <AvailabilitySlot>[];
+    final totalDays = _repeatWeeks * 7;
+    for (int i = 0; i < totalDays; i++) {
+      final day = _repeatFrom!.add(Duration(days: i));
+      final matches = _selectedWeekdays.any((w) => w.dartWeekday == day.weekday);
+      if (!matches) continue;
+      final start = DateTime(day.year, day.month, day.day, _slotStart!.hour, _slotStart!.minute);
+      final end = DateTime(day.year, day.month, day.day, _slotEnd!.hour, _slotEnd!.minute);
+      final weekdayEnum = Weekday.values.firstWhere((w) => w.dartWeekday == day.weekday);
+      newSlots.add(AvailabilitySlot(
+        id: _uuid.v4(),
+        chargerId: _pendingChargerId,
+        start: start,
+        end: end,
+        recurrenceLabel: 'Every ${weekdayEnum.shortLabel}',
+      ));
+    }
+    if (newSlots.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No matching dates found in the selected range.'), backgroundColor: PsEvColors.red),
+      );
+      return;
+    }
+    setState(() {
+      _pendingSlots.addAll(newSlots);
+      _resetSlotForm();
+    });
+  }
+
+  Widget _weekdayChip(Weekday w) {
+    final selected = _selectedWeekdays.contains(w);
+    return ChoiceChip(
+      label: Text(w.shortLabel),
+      selected: selected,
+      onSelected: (v) => setState(() => v ? _selectedWeekdays.add(w) : _selectedWeekdays.remove(w)),
+      selectedColor: PsEvColors.emerald,
+      labelStyle: TextStyle(color: selected ? Colors.white : PsEvColors.slateText, fontSize: 12, fontWeight: FontWeight.w600),
+      backgroundColor: PsEvColors.slate100,
+    );
+  }
+
+  Widget _modeButton(String label, bool active, VoidCallback onTap) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(10),
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 9),
+        decoration: BoxDecoration(
+          color: active ? PsEvColors.emerald : Colors.transparent,
+          borderRadius: BorderRadius.circular(10),
+        ),
+        alignment: Alignment.center,
+        child: Text(label, style: TextStyle(color: active ? Colors.white : PsEvColors.slateText, fontWeight: FontWeight.w600, fontSize: 12)),
+      ),
+    );
   }
 
   void _submit() {
     final app = context.read<AppState>();
     final price = double.tryParse(_priceCtrl.text);
-
     if (_nameCtrl.text.trim().isEmpty || price == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please fill in all charger details.'), backgroundColor: PsEvColors.red),
@@ -184,9 +344,17 @@ class _ChargerFormScreenState extends State<ChargerFormScreen> {
       );
       return;
     }
-
+    // A brand-new charger must have at least one free window - there is
+    // no fallback default anymore, so without this check the charger
+    // would be saved with zero windows and be invisible/unbookable.
+    if (!isEditing && _pendingSlots.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please add at least one free charging window before saving.'), backgroundColor: PsEvColors.red),
+      );
+      return;
+    }
     final coords = _resolveCoordinates();
-
+    setState(() => _submitting = true);
     if (isEditing) {
       final ch = widget.existing!;
       ch.label = _nameCtrl.text.trim();
@@ -205,7 +373,7 @@ class _ChargerFormScreenState extends State<ChargerFormScreen> {
       ch.latitude = coords.lat;
       ch.longitude = coords.lng;
       app.updateCharger(ch);
-      Navigator.pop(context, true);
+      Navigator.pop(context, 'updated');
     } else {
       final charger = ChargerProfile(
         hostId: app.currentUserId ?? '',
@@ -226,8 +394,9 @@ class _ChargerFormScreenState extends State<ChargerFormScreen> {
         residentsOnly: _residentsOnly,
         restrictedCommunity: _residentsOnly ? _community : null,
       );
+      charger.freeSlots.addAll(_pendingSlots);
       app.addCharger(charger);
-      Navigator.pop(context, true);
+      Navigator.pop(context, 'added');
     }
   }
 
@@ -238,7 +407,9 @@ class _ChargerFormScreenState extends State<ChargerFormScreen> {
     final limits = PricingService.limitsFor(_pricingModel);
     final hint = PricingService.hintText(_pricingModel, _power, double.tryParse(_priceCtrl.text) ?? 0);
     final connectorsForStandard = _chargingStandard.compatibleConnectors;
-
+    final hasPickedPin = _pickedLat != null && _pickedLng != null;
+    final dateFmt = DateFormat('EEE, MMM d');
+    final timeFmt = DateFormat('h:mm a');
     return Scaffold(
       appBar: PsEvAppBar(title: isEditing ? 'Edit Charger' : 'Add Charger'),
       body: ListView(
@@ -279,11 +450,6 @@ class _ChargerFormScreenState extends State<ChargerFormScreen> {
                   const SizedBox(height: 4),
                   TextField(controller: _nameCtrl),
                   const SizedBox(height: 12),
-
-                  // City/Area picker - shared with the driver filter and
-                  // service request form (see egypt_locations.dart /
-                  // LocationPickerField), so this charger will always be
-                  // discoverable by drivers filtering the same City/Area.
                   const Text('City & Area', style: TextStyle(fontSize: 12, color: PsEvColors.mutedText)),
                   const SizedBox(height: 4),
                   LocationPickerField(
@@ -302,15 +468,42 @@ class _ChargerFormScreenState extends State<ChargerFormScreen> {
                     padding: EdgeInsets.only(top: 4, bottom: 8),
                     child: Text(
                       'City and Area are used for filtering/search, and must match the same list drivers '
-                      'use. Without an exact Maps link, your charger will be placed near the City\'s center '
-                      '(spread out from other chargers in the same city). For a precise pin at your exact '
-                      'address, paste a Maps link below.',
+                      'use. For a precise pin at your exact address, use "Pick Exact Location on Map" below - '
+                      "it's more reliable than a pasted Maps link, which often doesn't contain exact coordinates.",
                       style: TextStyle(fontSize: 11, color: PsEvColors.mutedText),
                     ),
                   ),
-                  const Text('Maps link', style: TextStyle(fontSize: 12, color: PsEvColors.mutedText)),
+                  PsEvSoftButton(
+                    icon: Icons.pin_drop_outlined,
+                    label: hasPickedPin ? 'Change Pin Location' : 'Pick Exact Location on Map',
+                    onTap: _openMapPicker,
+                  ),
+                  if (hasPickedPin)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 6),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.check_circle, size: 14, color: PsEvColors.emerald),
+                          const SizedBox(width: 4),
+                          Text(
+                            'Custom pin set (${_pickedLat!.toStringAsFixed(5)}, ${_pickedLng!.toStringAsFixed(5)})',
+                            style: const TextStyle(fontSize: 11, color: PsEvColors.emerald, fontWeight: FontWeight.w600),
+                          ),
+                        ],
+                      ),
+                    ),
+                  const SizedBox(height: 12),
+                  const Text('Maps link (optional)', style: TextStyle(fontSize: 12, color: PsEvColors.mutedText)),
                   const SizedBox(height: 4),
                   TextField(controller: _mapLinkCtrl, decoration: const InputDecoration(hintText: 'https://maps.google.com/?q=30.0131,31.4326')),
+                  const Padding(
+                    padding: EdgeInsets.only(top: 4, bottom: 4),
+                    child: Text(
+                      'Only used if you have NOT picked a pin above. Note: many shortened Google Maps links '
+                      "(maps.app.goo.gl/...) don't contain usable coordinates - the map picker above is more reliable.",
+                      style: TextStyle(fontSize: 11, color: PsEvColors.mutedText),
+                    ),
+                  ),
                   const SizedBox(height: 16),
                   const Text('Charging standard', style: TextStyle(fontSize: 12, color: PsEvColors.mutedText)),
                   const SizedBox(height: 4),
@@ -342,7 +535,7 @@ class _ChargerFormScreenState extends State<ChargerFormScreen> {
                   const Text('Power (kW)', style: TextStyle(fontSize: 12, color: PsEvColors.mutedText)),
                   const SizedBox(height: 4),
                   DropdownButtonFormField<double>(
-                    value: _power,
+                    value: kPowerOptions.contains(_power) ? _power : kPowerOptions.first,
                     items: kPowerOptions.map((p) => DropdownMenuItem(value: p, child: Text('$p kW'))).toList(),
                     onChanged: (v) => setState(() => _power = v!),
                   ),
@@ -402,10 +595,134 @@ class _ChargerFormScreenState extends State<ChargerFormScreen> {
                         onChanged: (v) => setState(() => _community = v!),
                       ),
                     ),
-                  const SizedBox(height: 12),
+                  if (!isEditing) ...[
+                    const SizedBox(height: 18),
+                    Row(
+                      children: [
+                        const Text('Free Charging Windows', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                        const SizedBox(width: 6),
+                        const Text('*', style: TextStyle(color: PsEvColors.red, fontWeight: FontWeight.bold, fontSize: 14)),
+                      ],
+                    ),
+                    const Padding(
+                      padding: EdgeInsets.only(top: 2, bottom: 8),
+                      child: Text(
+                        'Add at least one window when drivers can book this charger. You can add more, or edit '
+                        'and delete these, at any time afterwards from Manage Charger.',
+                        style: TextStyle(fontSize: 11, color: PsEvColors.mutedText),
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(color: PsEvColors.slate100, borderRadius: BorderRadius.circular(14)),
+                      child: Column(
+                        children: [
+                          if (_pendingSlots.isEmpty)
+                            const Padding(
+                              padding: EdgeInsets.symmetric(vertical: 6),
+                              child: Text(
+                                'No windows added yet - add at least one below.',
+                                style: TextStyle(color: PsEvColors.red, fontSize: 12, fontWeight: FontWeight.w600),
+                              ),
+                            )
+                          else
+                            ..._pendingSlots.map((s) => Padding(
+                                  padding: const EdgeInsets.symmetric(vertical: 6),
+                                  child: Row(
+                                    children: [
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            Text('${dateFmt.format(s.start)} • ${timeFmt.format(s.start)} – ${timeFmt.format(s.end)}', style: const TextStyle(fontSize: 13)),
+                                            if (s.recurrenceLabel != null)
+                                              Text(s.recurrenceLabel!, style: const TextStyle(fontSize: 10, color: PsEvColors.emerald)),
+                                          ],
+                                        ),
+                                      ),
+                                      IconButton(
+                                        icon: const Icon(Icons.delete_outline, size: 18, color: PsEvColors.red),
+                                        onPressed: () => setState(() => _pendingSlots.remove(s)),
+                                      ),
+                                    ],
+                                  ),
+                                )),
+                          if (_showAddSlotForm)
+                            Container(
+                              margin: const EdgeInsets.only(top: 8),
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(14)),
+                              child: Column(
+                                children: [
+                                  Container(
+                                    padding: const EdgeInsets.all(4),
+                                    decoration: BoxDecoration(color: PsEvColors.slate100, borderRadius: BorderRadius.circular(12)),
+                                    child: Row(
+                                      children: [
+                                        Expanded(child: _modeButton('One-time', !_repeatWeekly, () => setState(() => _repeatWeekly = false))),
+                                        Expanded(child: _modeButton('Repeat weekly', _repeatWeekly, () => setState(() => _repeatWeekly = true))),
+                                      ],
+                                    ),
+                                  ),
+                                  const SizedBox(height: 12),
+                                  if (!_repeatWeekly) ...[
+                                    PsEvFilledButton(icon: Icons.calendar_today, label: _slotDate == null ? 'Pick date' : DateFormat('MMM d').format(_slotDate!), onTap: _pickSlotDate),
+                                    const SizedBox(height: 8),
+                                    PsEvFilledButton(icon: Icons.schedule, label: _slotStart == null ? 'Pick start time' : _slotStart!.format(context), onTap: _pickSlotStart),
+                                    const SizedBox(height: 8),
+                                    PsEvFilledButton(icon: Icons.schedule, label: _slotEnd == null ? 'Pick end time' : _slotEnd!.format(context), onTap: _pickSlotEnd),
+                                  ] else ...[
+                                    const Align(alignment: Alignment.centerLeft, child: Text('Repeat on:', style: TextStyle(fontSize: 12, color: PsEvColors.mutedText))),
+                                    const SizedBox(height: 6),
+                                    Wrap(spacing: 6, runSpacing: 6, children: Weekday.values.map(_weekdayChip).toList()),
+                                    const SizedBox(height: 10),
+                                    PsEvFilledButton(icon: Icons.calendar_today, label: _repeatFrom == null ? 'Starting from...' : DateFormat('MMM d').format(_repeatFrom!), onTap: _pickRepeatFrom),
+                                    const SizedBox(height: 8),
+                                    PsEvFilledButton(icon: Icons.schedule, label: _slotStart == null ? 'Pick start time' : _slotStart!.format(context), onTap: _pickSlotStart),
+                                    const SizedBox(height: 8),
+                                    PsEvFilledButton(icon: Icons.schedule, label: _slotEnd == null ? 'Pick end time' : _slotEnd!.format(context), onTap: _pickSlotEnd),
+                                    const SizedBox(height: 10),
+                                    Row(
+                                      children: [
+                                        const Text('Repeat for:', style: TextStyle(fontSize: 12, color: PsEvColors.mutedText)),
+                                        const SizedBox(width: 8),
+                                        DropdownButton<int>(
+                                          value: _repeatWeeks,
+                                          items: const [4, 8, 12].map((w) => DropdownMenuItem(value: w, child: Text('$w weeks'))).toList(),
+                                          onChanged: (v) => setState(() => _repeatWeeks = v!),
+                                        ),
+                                      ],
+                                    ),
+                                  ],
+                                  const SizedBox(height: 12),
+                                  Row(
+                                    children: [
+                                      Expanded(child: OutlinedButton(onPressed: () => setState(_resetSlotForm), child: const Text('Cancel'))),
+                                      const SizedBox(width: 8),
+                                      Expanded(
+                                        child: PsEvFilledButton(
+                                          label: _repeatWeekly ? 'Add Recurring Windows' : 'Add Window',
+                                          onTap: _repeatWeekly ? _addRecurringSlotsPending : _addOneTimeSlotPending,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            )
+                          else
+                            Padding(
+                              padding: const EdgeInsets.only(top: 8),
+                              child: PsEvSoftButton(icon: Icons.add, label: '+ Add free window', onTap: () => setState(() => _showAddSlotForm = true)),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 16),
                   PsEvFilledButton(
-                    label: isEditing ? 'Save Changes' : 'Save Charger',
-                    onTap: _submit,
+                    label: _submitting ? 'Saving...' : (isEditing ? 'Save Changes' : 'Save Charger'),
+                    onTap: _submitting ? null : _submit,
                   ),
                 ],
               ),

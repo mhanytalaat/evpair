@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../services/auth_service.dart';
 import '../../state/country_codes.dart';
+import '../../utils/phone_number_validator.dart';
 import '../../theme/ps_ev_theme.dart';
 
 /// Account details form, moved out of ProfileScreen's body so that
@@ -9,7 +10,6 @@ import '../../theme/ps_ev_theme.dart';
 /// like My Cars / My Stations / Wallet & Top-Up / Booking History.
 class AccountSettingsScreen extends StatefulWidget {
   const AccountSettingsScreen({super.key});
-
   @override
   State<AccountSettingsScreen> createState() => _AccountSettingsScreenState();
 }
@@ -20,7 +20,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
   late final TextEditingController _lastNameCtrl;
   late final TextEditingController _phoneCtrl;
   bool _saving = false;
-
+  String? _error;
   String _countryCode = '+20';
 
   @override
@@ -29,7 +29,6 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
     final auth = context.read<AuthService>();
     _firstNameCtrl = TextEditingController(text: auth.firstName ?? '');
     _lastNameCtrl = TextEditingController(text: auth.lastName ?? '');
-
     final storedPhone = auth.phone ?? '';
     final matched = kCountryDialCodes
         .where((c) => storedPhone.startsWith(c.code))
@@ -39,7 +38,13 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
     });
     if (matched != null) {
       _countryCode = matched.code;
-      _phoneCtrl = TextEditingController(text: storedPhone.substring(matched.code.length));
+      final remainder = storedPhone.substring(matched.code.length);
+      // Item #1: numbers are now STORED without the redundant leading 0
+      // (see PhoneNumberValidator.toE164), so it's added back here only
+      // for display/editing, matching the "01xxxxxxxxx" typing
+      // convention users are used to.
+      final display = matched.code == '+20' ? PhoneNumberValidator.addLeadingZeroIfMissing(remainder) : remainder;
+      _phoneCtrl = TextEditingController(text: display);
     } else {
       _phoneCtrl = TextEditingController(text: storedPhone);
     }
@@ -55,12 +60,29 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
 
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
-    setState(() => _saving = true);
-    await context.read<AuthService>().updateProfile(
-          firstName: _firstNameCtrl.text,
-          lastName: _lastNameCtrl.text,
-          phone: '$_countryCode${_phoneCtrl.text.trim()}',
-        );
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    final auth = context.read<AuthService>();
+    // Item #1: strip the redundant leading 0 before combining with the
+    // country code for storage (see PhoneNumberValidator.toE164).
+    final normalizedPhone = PhoneNumberValidator.toE164(_phoneCtrl.text, countryCode: _countryCode);
+    // Item #6: reject duplicate phone numbers here too, excluding the
+    // signed-in user's own existing record.
+    final phoneTaken = await auth.isPhoneNumberTaken(normalizedPhone, excludeUid: auth.uid);
+    if (phoneTaken) {
+      setState(() {
+        _saving = false;
+        _error = 'This phone number is already used by another account.';
+      });
+      return;
+    }
+    await auth.updateProfile(
+      firstName: _firstNameCtrl.text,
+      lastName: _lastNameCtrl.text,
+      phone: normalizedPhone,
+    );
     if (!mounted) return;
     setState(() => _saving = false);
     ScaffoldMessenger.of(context).showSnackBar(
@@ -146,15 +168,15 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
                             keyboardType: TextInputType.phone,
                             maxLength: 11,
                             decoration: const InputDecoration(counterText: '', hintText: '01xxxxxxxxx'),
-                            validator: (v) {
-                              if (v == null || v.trim().isEmpty) return 'Enter your mobile number';
-                              if (!RegExp(r'^\d{11}$').hasMatch(v.trim())) return 'Must be exactly 11 digits';
-                              return null;
-                            },
+                            validator: (v) => PhoneNumberValidator.validate(v, countryCode: _countryCode),
                           ),
                         ),
                       ],
                     ),
+                    if (_error != null) ...[
+                      const SizedBox(height: 10),
+                      Text(_error!, style: const TextStyle(color: PsEvColors.red, fontSize: 12)),
+                    ],
                     const SizedBox(height: 16),
                     PsEvFilledButton(
                       label: _saving ? 'Saving...' : 'Save Profile',

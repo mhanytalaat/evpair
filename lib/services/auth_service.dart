@@ -13,14 +13,12 @@ const String kAdminEmail = 'mhany@outlook.com';
 class AuthService extends ChangeNotifier {
   final FirebaseAuth _auth;
   final FirebaseFirestore _db;
-
   AuthService({FirebaseAuth? auth, FirebaseFirestore? firestore})
       : _auth = auth ?? FirebaseAuth.instance,
         _db = firestore ?? FirebaseFirestore.instance;
 
   bool isRegistered = false;
   bool isLoadingProfile = false;
-
   /// True while we're checking Firebase Auth's persisted session on app
   /// start. Screens can use this to show a brief loading state instead of
   /// flashing "guest" UI before the session is restored.
@@ -64,10 +62,24 @@ class AuthService extends ChangeNotifier {
     };
   }
 
+  /// Item #6: checks whether a phone number (already combined with its
+  /// country code, e.g. "+201001234567") is already used by another
+  /// account. Pass `excludeUid` when checking during a profile EDIT (so a
+  /// user isn't blocked by their own existing number) - leave it null
+  /// during registration, since there is no uid yet.
+  Future<bool> isPhoneNumberTaken(String e164Phone, {String? excludeUid}) async {
+    final snap = await _db.collection('users').where('phone', isEqualTo: e164Phone).get();
+    if (excludeUid == null) return snap.docs.isNotEmpty;
+    return snap.docs.any((d) => d.id != excludeUid);
+  }
+
   /// Creates a brand-new Firebase Auth account (email + password) and a
   /// matching Firestore profile document keyed by the new uid. Throws a
   /// [FirebaseAuthException] on failure (e.g. email-already-in-use,
-  /// weak-password) - the caller (RegisterScreen) shows the message.
+  /// weak-password) - the caller (RegisterScreen) shows the message. Note:
+  /// Firebase Auth itself already rejects a duplicate EMAIL here; a
+  /// duplicate PHONE number is checked separately by the caller via
+  /// isPhoneNumberTaken() before this is invoked.
   Future<void> register({
     required String firstName,
     required String lastName,
@@ -79,7 +91,6 @@ class AuthService extends ChangeNotifier {
       email: email.trim(),
       password: password,
     );
-
     uid = credential.user!.uid;
     this.firstName = firstName.trim();
     this.lastName = lastName.trim();
@@ -87,7 +98,6 @@ class AuthService extends ChangeNotifier {
     this.phone = phone.trim();
     isRegistered = true;
     notifyListeners();
-
     await saveProfileToFirestore();
   }
 
@@ -118,12 +128,10 @@ class AuthService extends ChangeNotifier {
   Future<void> tryAutoSignIn() async {
     isInitializing = true;
     notifyListeners();
-
     final current = _auth.currentUser;
     if (current != null) {
       await _loadProfileForUid(current.uid, fallbackEmail: current.email);
     }
-
     isInitializing = false;
     notifyListeners();
   }
@@ -151,11 +159,9 @@ class AuthService extends ChangeNotifier {
   Future<void> _loadProfileForUid(String userId, {String? fallbackEmail}) async {
     isLoadingProfile = true;
     notifyListeners();
-
     uid = userId;
     final doc = await _db.collection('users').doc(userId).get();
     final data = doc.data();
-
     if (data != null) {
       firstName = data['firstName'] as String?;
       lastName = data['lastName'] as String?;
@@ -165,7 +171,6 @@ class AuthService extends ChangeNotifier {
       email = fallbackEmail;
     }
     isRegistered = true;
-
     isLoadingProfile = false;
     notifyListeners();
   }

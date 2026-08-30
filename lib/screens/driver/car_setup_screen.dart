@@ -10,7 +10,6 @@ import '../../utils/plate_number_validator.dart';
 class CarSetupScreen extends StatefulWidget {
   final CarProfile? existing;
   const CarSetupScreen({super.key, this.existing});
-
   @override
   State<CarSetupScreen> createState() => _CarSetupScreenState();
 }
@@ -25,15 +24,20 @@ class _CarSetupScreenState extends State<CarSetupScreen> {
   late String _model;
   late ChargingStandard _chargingStandard;
   late ConnectorType _connector;
-
   bool get isEditing => widget.existing != null;
 
   @override
   void initState() {
     super.initState();
     final e = widget.existing;
+    // Defensive against the Firestore-backed kCarBrandModels having
+    // changed since this car was saved (e.g. a brand was renamed/removed
+    // in the console) - falls back to the first available brand/model
+    // instead of throwing, the same defensive pattern already used for
+    // City/Area in LocationPickerField.
     _brand = (e != null && kCarBrandModels.containsKey(e.brand)) ? e.brand : kCarBrandModels.keys.first;
-    _model = (e != null && kCarBrandModels[_brand]!.contains(e.model)) ? e.model : kCarBrandModels[_brand]!.first;
+    final modelsForBrand = kCarBrandModels[_brand] ?? const ['Other Model'];
+    _model = (e != null && modelsForBrand.contains(e.model)) ? e.model : modelsForBrand.first;
     _rangeCtrl = TextEditingController(text: e?.rangeKm.toStringAsFixed(0) ?? '450');
     _plateCtrl = TextEditingController(text: e?.plateNumber ?? '');
     _ampere = e?.maxAmpere ?? 32;
@@ -59,10 +63,8 @@ class _CarSetupScreenState extends State<CarSetupScreen> {
     // message instead of silently being saved and only surfacing later
     // as a confusing failure at booking time in BookingService.createRequest.
     if (!_formKey.currentState!.validate()) return;
-
     final app = context.read<AppState>();
     final plate = PlateNumberValidator.normalize(_plateCtrl.text);
-
     final car = CarProfile(
       carId: widget.existing?.carId ?? 'car_${DateTime.now().millisecondsSinceEpoch}',
       driverId: app.currentUserId ?? '',
@@ -85,7 +87,11 @@ class _CarSetupScreenState extends State<CarSetupScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final modelsForBrand = kCarBrandModels[_brand]!;
+    // Read live every build (not just in initState) so a brand added in
+    // Firestore while this screen is open still shows up if the user
+    // backs out and re-enters - kCarBrandModels itself is just a getter
+    // over the current live map, so this is always cheap.
+    final modelsForBrand = kCarBrandModels[_brand] ?? const ['Other Model'];
     final connectorsForStandard = _chargingStandard.compatibleConnectors;
     return Scaffold(
       appBar: PsEvAppBar(title: isEditing ? 'Edit Car' : 'Add Car'),
@@ -103,7 +109,7 @@ class _CarSetupScreenState extends State<CarSetupScreen> {
                     const Text('Car brand', style: TextStyle(fontSize: 12, color: PsEvColors.mutedText)),
                     const SizedBox(height: 4),
                     DropdownButtonFormField<String>(
-                      value: _brand,
+                      value: kCarBrandModels.containsKey(_brand) ? _brand : kCarBrandModels.keys.first,
                       items: kCarBrandModels.keys.map((b) => DropdownMenuItem(value: b, child: Text(b))).toList(),
                       onChanged: (v) => setState(() {
                         _brand = v!;
@@ -114,7 +120,7 @@ class _CarSetupScreenState extends State<CarSetupScreen> {
                     const Text('Car model', style: TextStyle(fontSize: 12, color: PsEvColors.mutedText)),
                     const SizedBox(height: 4),
                     DropdownButtonFormField<String>(
-                      value: _model,
+                      value: modelsForBrand.contains(_model) ? _model : modelsForBrand.first,
                       items: modelsForBrand.map((m) => DropdownMenuItem(value: m, child: Text(m))).toList(),
                       onChanged: (v) => setState(() => _model = v!),
                     ),

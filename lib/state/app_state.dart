@@ -1,7 +1,23 @@
+import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import '../models/car_profile.dart';
 import '../models/charger_profile.dart';
+// kW options in Firestore: kPowerOptions now lives in
+// data/charger_power_options.dart (live, Firestore-backed - see
+// services/power_options_service.dart) instead of being a hardcoded
+// const here. This `export` means every existing file that already does
+// `import '../../state/app_state.dart'` (e.g. charger_form_screen.dart,
+// host_home_screen.dart) keeps working with ZERO changes - they still
+// just reference `kPowerOptions` and now transparently get the live,
+// Firestore-driven list.
+export '../data/charger_power_options.dart' show kPowerOptions;
+// Car brand/model options in Firestore: kCarBrandModels now lives in
+// data/car_brand_models.dart (live, Firestore-backed - see
+// services/car_models_service.dart) instead of being a hardcoded const
+// here. Same drop-in export pattern as kPowerOptions above - CarSetupScreen
+// keeps using `kCarBrandModels` with zero changes to its own code.
+export '../data/car_brand_models.dart' show kCarBrandModels;
 
 enum AppRole { driver, host, admin }
 
@@ -73,27 +89,16 @@ const Map<String, ({double lat, double lng})> kAreaCoordinates = {
   return (lat: dy, lng: dx);
 }
 
-const List<double> kPowerOptions = [3.3, 7.4, 11, 22, 50, 100];
-const List<double> kAmpereOptions = [16, 32, 63];
+// NOTE: kPowerOptions and kCarBrandModels used to be defined here as
+// hardcoded consts. Both have been MOVED to their own Firestore-backed
+// data files (see the two `export` lines at the top of this file) - do
+// not re-add local definitions here, they would conflict with the
+// exported ones.
 
-const Map<String, List<String>> kCarBrandModels = {
-  'Arcfox': ['T1', 'Alpha S', 'Alpha T'],
-  'BYD': ['Atto 3', 'Dolphin', 'Seal', 'Han', 'Tang', 'Song Plus'],
-  'Geely': ['EX2', 'EX5', 'Geometry C', 'Geometry E'],
-  'Volkswagen (VW)': ['ID3', 'ID4', 'ID6'],
-  'Tesla': ['Model 3', 'Model Y', 'Model S', 'Model X'],
-  'Nissan': ['Leaf', 'Ariya'],
-  'Hyundai': ['Kona Electric', 'Ioniq 5', 'Ioniq 6'],
-  'Kia': ['EV6', 'Niro EV', 'EV9'],
-  'MG': ['MG4', 'MG ZS EV', 'MG5'],
-  'NIO': ['ET5', 'ES6', 'ET7'],
-  'XPeng': ['P7', 'G3', 'G6'],
-  'Other': ['Other Model'],
-};
+const List<double> kAmpereOptions = [16, 32, 63];
 
 class AppState extends ChangeNotifier {
   AppState({FirebaseFirestore? firestore}) : _db = firestore ?? FirebaseFirestore.instance;
-
   final FirebaseFirestore _db;
 
   /// True while cars/chargers are being loaded from Firestore.
@@ -110,7 +115,6 @@ class AppState extends ChangeNotifier {
 
   final List<CarProfile> cars = [];
   String? activeCarId;
-
   String? lastDriverBookingId;
 
   CarProfile? get car {
@@ -123,11 +127,17 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  /// ALL chargers in the marketplace (every host), loaded from Firestore.
-  /// There is no bundled demo/seed data - this starts empty and only ever
+  /// ALL chargers in the marketplace (every host), kept in sync with
+  /// Firestore in REAL TIME via a live `.snapshots()` listener (see
+  /// _listenToChargers below) - so a station added, edited, or removed
+  /// by ANY host on ANY device appears on every other user's map/list
+  /// immediately, without needing to close and reopen the app. There is
+  /// no bundled demo/seed data - this starts empty and only ever
   /// contains chargers that hosts have actually added via
   /// ChargerFormScreen.
   final List<ChargerProfile> chargers = [];
+
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _chargersSubscription;
 
   List<ChargerProfile> get myChargers =>
       currentUserId == null ? const [] : chargers.where((c) => c.hostId == currentUserId).toList();
@@ -137,20 +147,25 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Loads marketplace chargers (every host - drivers need to see all of
-  /// them to browse/book) and, if signed in, this user's own cars from
-  /// Firestore. Called on app start and again whenever the signed-in user
-  /// changes (see setCurrentUserAndHydrate/clearCurrentUserAndData).
+  /// Sets up (or re-attaches) the real-time chargers listener and loads,
+  /// if signed in, this user's own cars from Firestore. Called on app
+  /// start and again whenever the signed-in user changes (see
+  /// setCurrentUserAndHydrate/clearCurrentUserAndData).
+  ///
+  /// FIX for "I need to close the app and open it again to see a new
+  /// station on the map": chargers used to be loaded with a single
+  /// one-time `.get()` call, so a station added by ANY host (including a
+  /// different device/session) was only ever picked up the NEXT time the
+  /// app cold-started and re-ran this method. Switching to a live
+  /// `.snapshots()` listener means every signed-in app instance updates
+  /// its `chargers` list - and therefore the map and station list -
+  /// automatically the moment Firestore's `chargers` collection changes,
+  /// with no restart required.
   Future<void> hydrateFromFirestore() async {
     isHydrating = true;
     notifyListeners();
-
     try {
-      final chargersSnapshot = await _db.collection('chargers').get();
-      chargers
-        ..clear()
-        ..addAll(chargersSnapshot.docs.map((d) => ChargerProfile.fromFirestore(d.data())));
-
+      await _listenToChargers();
       if (currentUserId != null) {
         final carsSnapshot = await _db.collection('cars').where('driverId', isEqualTo: currentUserId).get();
         cars
@@ -164,9 +179,40 @@ class AppState extends ChangeNotifier {
     } catch (e) {
       debugPrint('AppState.hydrateFromFirestore failed: $e');
     }
-
     isHydrating = false;
     notifyListeners();
+  }
+
+  /// (Re)attaches the real-time chargers listener. Cancels any existing
+  /// subscription first so calling hydrateFromFirestore() multiple times
+  /// (e.g. on every sign-in/sign-out) never stacks up duplicate
+  /// listeners. Awaits the FIRST snapshot so callers can still rely on
+  /// `chargers` being populated as soon as this completes - every
+  /// snapshot AFTER that first one arrives asynchronously in the
+  /// background and simply calls notifyListeners() again.
+  Future<void> _listenToChargers() {
+    final completer = Completer<void>();
+    _chargersSubscription?.cancel();
+    _chargersSubscription = _db.collection('chargers').snapshots().listen(
+      (snapshot) {
+        chargers
+          ..clear()
+          ..addAll(snapshot.docs.map((d) => ChargerProfile.fromFirestore(d.data())));
+        notifyListeners();
+        if (!completer.isCompleted) completer.complete();
+      },
+      onError: (e) {
+        debugPrint('AppState: chargers listener error: $e');
+        if (!completer.isCompleted) completer.complete();
+      },
+    );
+    return completer.future;
+  }
+
+  @override
+  void dispose() {
+    _chargersSubscription?.cancel();
+    super.dispose();
   }
 
   /// Call right after a successful register()/signIn() so this user's own
@@ -178,7 +224,8 @@ class AppState extends ChangeNotifier {
 
   /// Call right after signOut(). Clears private data (cars) and resets out
   /// of the Host/Admin tabs; the charger marketplace list is left as-is
-  /// since browsing chargers doesn't require an account.
+  /// since browsing chargers doesn't require an account (and the live
+  /// listener keeps running regardless of sign-in state).
   Future<void> clearCurrentUserAndData() async {
     currentUserId = null;
     cars.clear();
@@ -215,6 +262,11 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Adds a charger both to the in-memory list (instant local feedback -
+  /// this device sees it right away, before Firestore even confirms the
+  /// write) AND persists it to Firestore, whose real-time listener (see
+  /// _listenToChargers) will then push the exact same data out to every
+  /// OTHER signed-in app instance automatically.
   void addCharger(ChargerProfile c) {
     chargers.add(c);
     notifyListeners();
