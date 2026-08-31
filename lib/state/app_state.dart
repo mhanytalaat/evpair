@@ -3,20 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import '../models/car_profile.dart';
 import '../models/charger_profile.dart';
-// kW options in Firestore: kPowerOptions now lives in
-// data/charger_power_options.dart (live, Firestore-backed - see
-// services/power_options_service.dart) instead of being a hardcoded
-// const here. This `export` means every existing file that already does
-// `import '../../state/app_state.dart'` (e.g. charger_form_screen.dart,
-// host_home_screen.dart) keeps working with ZERO changes - they still
-// just reference `kPowerOptions` and now transparently get the live,
-// Firestore-driven list.
 export '../data/charger_power_options.dart' show kPowerOptions;
-// Car brand/model options in Firestore: kCarBrandModels now lives in
-// data/car_brand_models.dart (live, Firestore-backed - see
-// services/car_models_service.dart) instead of being a hardcoded const
-// here. Same drop-in export pattern as kPowerOptions above - CarSetupScreen
-// keeps using `kCarBrandModels` with zero changes to its own code.
 export '../data/car_brand_models.dart' show kCarBrandModels;
 
 enum AppRole { driver, host, admin }
@@ -31,57 +18,6 @@ const List<String> kCommunityOptions = [
   'Other Compound',
 ];
 
-const Map<String, List<String>> kCityAreaOptions = {
-  'Cairo': ['New Cairo', 'Maadi', 'Zamalek', 'Nasr City', 'Heliopolis', 'Rehab City', 'Katameya', 'Other Cairo'],
-  'Giza': ['Sheikh Zayed', '6th of October', 'Mohandessin', 'Dokki', 'Haram', 'Other Giza'],
-  'Alexandria': ['Smouha', 'Stanley', 'Gleem', 'Miami', 'Sidi Gaber', 'Other Alexandria'],
-  'New Capital': ['Downtown', 'R7', 'R8', 'Diplomatic District', 'Other New Capital'],
-  'Red Sea': ['Hurghada', 'El Gouna', 'Sahl Hasheesh', 'Makadi Bay', 'Other Red Sea'],
-  'North Coast': ['Marassi', 'Hacienda', 'New Alamein', 'Sidi Abdelrahman', 'Other North Coast'],
-  'Other': ['Other'],
-};
-
-const List<String> kCityOptions = ['Cairo', 'Giza', 'Alexandria', 'New Capital', 'Red Sea', 'North Coast', 'Other'];
-
-const Map<String, ({double lat, double lng})> kAreaCoordinates = {
-  'New Cairo': (lat: 30.0131, lng: 31.4326),
-  'Maadi': (lat: 29.9602, lng: 31.2569),
-  'Zamalek': (lat: 30.0626, lng: 31.2197),
-  'Nasr City': (lat: 30.0561, lng: 31.3300),
-  'Heliopolis': (lat: 30.0910, lng: 31.3225),
-  'Rehab City': (lat: 30.0566, lng: 31.4913),
-  'Katameya': (lat: 29.9700, lng: 31.3400),
-  'Other Cairo': (lat: 30.0444, lng: 31.2357),
-  'Sheikh Zayed': (lat: 30.0778, lng: 30.9757),
-  '6th of October': (lat: 29.9660, lng: 30.9232),
-  'Mohandessin': (lat: 30.0551, lng: 31.2000),
-  'Dokki': (lat: 30.0384, lng: 31.2115),
-  'Haram': (lat: 29.9950, lng: 31.1510),
-  'Other Giza': (lat: 30.0131, lng: 31.2089),
-  'Smouha': (lat: 31.2070, lng: 29.9450),
-  'Stanley': (lat: 31.2240, lng: 29.9600),
-  'Gleem': (lat: 31.2340, lng: 29.9560),
-  'Miami': (lat: 31.2600, lng: 29.9900),
-  'Sidi Gaber': (lat: 31.2182, lng: 29.9420),
-  'Other Alexandria': (lat: 31.2001, lng: 29.9187),
-  'Downtown': (lat: 30.0131, lng: 31.7051),
-  'R7': (lat: 30.0080, lng: 31.6900),
-  'R8': (lat: 29.9950, lng: 31.7100),
-  'Diplomatic District': (lat: 30.0200, lng: 31.7300),
-  'Other New Capital': (lat: 30.0131, lng: 31.7051),
-  'Hurghada': (lat: 27.2579, lng: 33.8116),
-  'El Gouna': (lat: 27.3942, lng: 33.6782),
-  'Sahl Hasheesh': (lat: 27.0450, lng: 33.8900),
-  'Makadi Bay': (lat: 26.9910, lng: 33.8990),
-  'Other Red Sea': (lat: 27.2579, lng: 33.8116),
-  'Marassi': (lat: 30.9740, lng: 28.7480),
-  'Hacienda': (lat: 30.9350, lng: 28.7700),
-  'New Alamein': (lat: 30.8300, lng: 28.9550),
-  'Sidi Abdelrahman': (lat: 30.9300, lng: 28.8300),
-  'Other North Coast': (lat: 30.8500, lng: 29.0000),
-  'Other': (lat: 30.0444, lng: 31.2357),
-};
-
 ({double lat, double lng}) jitterOffsetFor(String seed) {
   final hash = seed.hashCode;
   final dx = ((hash % 2000) / 1000.0 - 1.0) * 0.012;
@@ -89,28 +25,14 @@ const Map<String, ({double lat, double lng})> kAreaCoordinates = {
   return (lat: dy, lng: dx);
 }
 
-// NOTE: kPowerOptions and kCarBrandModels used to be defined here as
-// hardcoded consts. Both have been MOVED to their own Firestore-backed
-// data files (see the two `export` lines at the top of this file) - do
-// not re-add local definitions here, they would conflict with the
-// exported ones.
-
 const List<double> kAmpereOptions = [16, 32, 63];
 
 class AppState extends ChangeNotifier {
   AppState({FirebaseFirestore? firestore}) : _db = firestore ?? FirebaseFirestore.instance;
   final FirebaseFirestore _db;
 
-  /// True while cars/chargers are being loaded from Firestore.
   bool isHydrating = true;
-
   AppRole role = AppRole.driver;
-
-  /// The Firebase Auth uid of the currently signed-in user, or null for a
-  /// guest. Car ownership (`cars.driverId`) and charger ownership
-  /// (`chargers.hostId`) are both keyed to this id - see
-  /// setCurrentUserAndHydrate/clearCurrentUserAndData, called from the
-  /// Register/Sign In/Sign Out flows in AuthService's callers.
   String? currentUserId;
 
   final List<CarProfile> cars = [];
@@ -127,16 +49,7 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  /// ALL chargers in the marketplace (every host), kept in sync with
-  /// Firestore in REAL TIME via a live `.snapshots()` listener (see
-  /// _listenToChargers below) - so a station added, edited, or removed
-  /// by ANY host on ANY device appears on every other user's map/list
-  /// immediately, without needing to close and reopen the app. There is
-  /// no bundled demo/seed data - this starts empty and only ever
-  /// contains chargers that hosts have actually added via
-  /// ChargerFormScreen.
   final List<ChargerProfile> chargers = [];
-
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _chargersSubscription;
 
   List<ChargerProfile> get myChargers =>
@@ -147,20 +60,6 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Sets up (or re-attaches) the real-time chargers listener and loads,
-  /// if signed in, this user's own cars from Firestore. Called on app
-  /// start and again whenever the signed-in user changes (see
-  /// setCurrentUserAndHydrate/clearCurrentUserAndData).
-  ///
-  /// FIX for "I need to close the app and open it again to see a new
-  /// station on the map": chargers used to be loaded with a single
-  /// one-time `.get()` call, so a station added by ANY host (including a
-  /// different device/session) was only ever picked up the NEXT time the
-  /// app cold-started and re-ran this method. Switching to a live
-  /// `.snapshots()` listener means every signed-in app instance updates
-  /// its `chargers` list - and therefore the map and station list -
-  /// automatically the moment Firestore's `chargers` collection changes,
-  /// with no restart required.
   Future<void> hydrateFromFirestore() async {
     isHydrating = true;
     notifyListeners();
@@ -183,13 +82,6 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// (Re)attaches the real-time chargers listener. Cancels any existing
-  /// subscription first so calling hydrateFromFirestore() multiple times
-  /// (e.g. on every sign-in/sign-out) never stacks up duplicate
-  /// listeners. Awaits the FIRST snapshot so callers can still rely on
-  /// `chargers` being populated as soon as this completes - every
-  /// snapshot AFTER that first one arrives asynchronously in the
-  /// background and simply calls notifyListeners() again.
   Future<void> _listenToChargers() {
     final completer = Completer<void>();
     _chargersSubscription?.cancel();
@@ -215,17 +107,11 @@ class AppState extends ChangeNotifier {
     super.dispose();
   }
 
-  /// Call right after a successful register()/signIn() so this user's own
-  /// cars (and their view of the marketplace) load correctly.
   Future<void> setCurrentUserAndHydrate(String userId) async {
     currentUserId = userId;
     await hydrateFromFirestore();
   }
 
-  /// Call right after signOut(). Clears private data (cars) and resets out
-  /// of the Host/Admin tabs; the charger marketplace list is left as-is
-  /// since browsing chargers doesn't require an account (and the live
-  /// listener keeps running regardless of sign-in state).
   Future<void> clearCurrentUserAndData() async {
     currentUserId = null;
     cars.clear();
@@ -262,23 +148,28 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Adds a charger both to the in-memory list (instant local feedback -
-  /// this device sees it right away, before Firestore even confirms the
-  /// write) AND persists it to Firestore, whose real-time listener (see
-  /// _listenToChargers) will then push the exact same data out to every
-  /// OTHER signed-in app instance automatically.
-  void addCharger(ChargerProfile c) {
+  /// Awaits the Firestore write and REthrows on failure (instead of the
+  /// previous fire-and-forget version, which could never report a
+  /// rejected write - the charger just silently vanished later when the
+  /// real-time listener resynced from the server). On failure, the
+  /// optimistic local add is rolled back so the list never shows a
+  /// charger that isn't actually saved.
+  Future<void> addCharger(ChargerProfile c) async {
     chargers.add(c);
     notifyListeners();
-    _db.collection('chargers').doc(c.chargerId).set(c.toFirestore(), SetOptions(merge: true));
+    try {
+      await _db.collection('chargers').doc(c.chargerId).set(c.toFirestore(), SetOptions(merge: true));
+    } catch (e) {
+      chargers.removeWhere((existing) => existing.chargerId == c.chargerId);
+      notifyListeners();
+      rethrow;
+    }
   }
 
-  /// Persists in-place edits made to an existing ChargerProfile (see
-  /// ChargerFormScreen, which mutates the object's fields directly rather
-  /// than constructing a new instance).
-  void updateCharger(ChargerProfile updated) {
+  /// Same fix as addCharger: awaited and rethrown.
+  Future<void> updateCharger(ChargerProfile updated) async {
     notifyListeners();
-    _db.collection('chargers').doc(updated.chargerId).set(updated.toFirestore(), SetOptions(merge: true));
+    await _db.collection('chargers').doc(updated.chargerId).set(updated.toFirestore(), SetOptions(merge: true));
   }
 
   void removeCharger(String chargerId) {

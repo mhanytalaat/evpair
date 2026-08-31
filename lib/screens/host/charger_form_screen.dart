@@ -27,18 +27,6 @@ import 'pick_location_on_map_screen.dart';
   return (lat: lat, lng: lng);
 }
 
-/// A brand-new charger MUST have at least one free charging window
-/// added before it can be saved - there is NO auto-seeded default
-/// window. The add-window form below is embedded directly in this
-/// screen (same one-time/recurring pattern used in ManageChargerScreen)
-/// and never pre-fills a date or time - the host must explicitly pick
-/// every value themselves.
-///
-/// Once the charger exists, further changes to its free windows (adding
-/// more later, or deleting any) are done from Manage Charger, reached by
-/// tapping the station in the host's charger list - see
-/// ManageChargerScreen's existing "+ Add free window" section, which is
-/// unchanged.
 class ChargerFormScreen extends StatefulWidget {
   final ChargerProfile? existing;
   const ChargerFormScreen({super.key, this.existing});
@@ -69,8 +57,6 @@ class _ChargerFormScreenState extends State<ChargerFormScreen> {
   double? _pickedLat;
   double? _pickedLng;
 
-  // Free charging windows - REQUIRED (at least one) for a brand-new
-  // charger, with NO default date/time ever pre-filled.
   final List<AvailabilitySlot> _pendingSlots = [];
   bool _showAddSlotForm = false;
   bool _repeatWeekly = false;
@@ -241,6 +227,12 @@ class _ChargerFormScreenState extends State<ChargerFormScreen> {
       return;
     }
     setState(() {
+      // NOTE: recurrenceLabel intentionally left null here for a
+      // one-time slot - ChargerProfile.toFirestore()'s _slotToFirestore
+      // helper now OMITS this key entirely from the Firestore map
+      // instead of sending it as a null value, which is the fix for
+      // "one-time slot doesn't save, recurring does" (see
+      // models/charger_profile.dart).
       _pendingSlots.add(AvailabilitySlot(id: _uuid.v4(), chargerId: _pendingChargerId, start: start, end: end));
       _resetSlotForm();
     });
@@ -316,7 +308,17 @@ class _ChargerFormScreenState extends State<ChargerFormScreen> {
     );
   }
 
-  void _submit() {
+  /// FIX: now `async` and AWAITS the Firestore write inside a
+  /// try/catch. Previously this fired `app.addCharger(...)`/
+  /// `app.updateCharger(...)` without awaiting, so a failed write was
+  /// never detected - the screen just closed as if it succeeded, and
+  /// the charger later vanished once the real-time listener resynced
+  /// from the server. Now:
+  ///   - On SUCCESS: pops with 'added'/'updated' exactly as before.
+  ///   - On FAILURE: stays open, resets the Saving state, and shows the
+  ///     ACTUAL error message in a red SnackBar so it's visible instead
+  ///     of silently disappearing.
+  Future<void> _submit() async {
     final app = context.read<AppState>();
     final price = double.tryParse(_priceCtrl.text);
     if (_nameCtrl.text.trim().isEmpty || price == null) {
@@ -344,9 +346,6 @@ class _ChargerFormScreenState extends State<ChargerFormScreen> {
       );
       return;
     }
-    // A brand-new charger must have at least one free window - there is
-    // no fallback default anymore, so without this check the charger
-    // would be saved with zero windows and be invisible/unbookable.
     if (!isEditing && _pendingSlots.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please add at least one free charging window before saving.'), backgroundColor: PsEvColors.red),
@@ -355,48 +354,62 @@ class _ChargerFormScreenState extends State<ChargerFormScreen> {
     }
     final coords = _resolveCoordinates();
     setState(() => _submitting = true);
-    if (isEditing) {
-      final ch = widget.existing!;
-      ch.label = _nameCtrl.text.trim();
-      ch.city = _city!;
-      ch.area = _area!;
-      ch.mapLink = _mapLinkCtrl.text.trim().isEmpty ? null : _mapLinkCtrl.text.trim();
-      ch.connector = _connector;
-      ch.powerKw = _power;
-      ch.ampere = _ampere;
-      ch.pricingModel = _pricingModel;
-      ch.price = price;
-      ch.photoBytes = _photoBytes ?? ch.photoBytes;
-      ch.residentsOnly = _residentsOnly;
-      ch.restrictedCommunity = _residentsOnly ? _community : null;
-      ch.chargingStandard = _chargingStandard;
-      ch.latitude = coords.lat;
-      ch.longitude = coords.lng;
-      app.updateCharger(ch);
-      Navigator.pop(context, 'updated');
-    } else {
-      final charger = ChargerProfile(
-        hostId: app.currentUserId ?? '',
-        chargerId: _pendingChargerId,
-        label: _nameCtrl.text.trim(),
-        powerKw: _power,
-        ampere: _ampere,
-        connector: _connector,
-        city: _city!,
-        area: _area!,
-        chargingStandard: _chargingStandard,
-        pricingModel: _pricingModel,
-        price: price,
-        latitude: coords.lat,
-        longitude: coords.lng,
-        photoBytes: _photoBytes,
-        mapLink: _mapLinkCtrl.text.trim().isEmpty ? null : _mapLinkCtrl.text.trim(),
-        residentsOnly: _residentsOnly,
-        restrictedCommunity: _residentsOnly ? _community : null,
+    try {
+      if (isEditing) {
+        final ch = widget.existing!;
+        ch.label = _nameCtrl.text.trim();
+        ch.city = _city!;
+        ch.area = _area!;
+        ch.mapLink = _mapLinkCtrl.text.trim().isEmpty ? null : _mapLinkCtrl.text.trim();
+        ch.connector = _connector;
+        ch.powerKw = _power;
+        ch.ampere = _ampere;
+        ch.pricingModel = _pricingModel;
+        ch.price = price;
+        ch.photoBytes = _photoBytes ?? ch.photoBytes;
+        ch.residentsOnly = _residentsOnly;
+        ch.restrictedCommunity = _residentsOnly ? _community : null;
+        ch.chargingStandard = _chargingStandard;
+        ch.latitude = coords.lat;
+        ch.longitude = coords.lng;
+        await app.updateCharger(ch);
+        if (!mounted) return;
+        Navigator.pop(context, 'updated');
+      } else {
+        final charger = ChargerProfile(
+          hostId: app.currentUserId ?? '',
+          chargerId: _pendingChargerId,
+          label: _nameCtrl.text.trim(),
+          powerKw: _power,
+          ampere: _ampere,
+          connector: _connector,
+          city: _city!,
+          area: _area!,
+          chargingStandard: _chargingStandard,
+          pricingModel: _pricingModel,
+          price: price,
+          latitude: coords.lat,
+          longitude: coords.lng,
+          photoBytes: _photoBytes,
+          mapLink: _mapLinkCtrl.text.trim().isEmpty ? null : _mapLinkCtrl.text.trim(),
+          residentsOnly: _residentsOnly,
+          restrictedCommunity: _residentsOnly ? _community : null,
+        );
+        charger.freeSlots.addAll(_pendingSlots);
+        await app.addCharger(charger);
+        if (!mounted) return;
+        Navigator.pop(context, 'added');
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _submitting = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Could not save this charger: $e'),
+          backgroundColor: PsEvColors.red,
+          duration: const Duration(seconds: 8),
+        ),
       );
-      charger.freeSlots.addAll(_pendingSlots);
-      app.addCharger(charger);
-      Navigator.pop(context, 'added');
     }
   }
 

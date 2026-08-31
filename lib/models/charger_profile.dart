@@ -12,28 +12,17 @@ class ChargerProfile {
   double powerKw;
   double ampere;
   ConnectorType connector;
-
   String city;
   String area;
-
   ChargingStandard chargingStandard;
-
   PricingModel pricingModel;
   double price;
-
   Uint8List? photoBytes;
-
-  /// Host-provided Google Maps link. When present, this is the source of
-  /// TRUTH for map placement (parsed for exact coordinates) - it takes
-  /// priority over the City/Area-based fallback.
   String? mapLink;
-
   double latitude;
   double longitude;
-
   bool residentsOnly;
   String? restrictedCommunity;
-
   final List<AvailabilitySlot> freeSlots;
 
   ChargerProfile({
@@ -65,9 +54,6 @@ class ChargerProfile {
     return driverCommunity == restrictedCommunity;
   }
 
-  /// Finds a host-defined window that fully contains [reqStart]-[reqEnd].
-  /// Does NOT check for overlaps with other bookings within that window -
-  /// see BookingService.isRangeAvailable() for the full check.
   AvailabilitySlot? findFittingSlot(DateTime reqStart, DateTime reqEnd) {
     final candidates = freeSlots.where((s) => s.canFit(reqStart, reqEnd)).toList()
       ..sort((a, b) => a.start.compareTo(b.start));
@@ -76,52 +62,79 @@ class ChargerProfile {
 
   String get priceLabel => PricingService.priceLabel(pricingModel, price);
 
-  /// Firestore document shape for the `chargers` collection. Field names
-  /// match what is actually used in the UI (ChargerFormScreen /
-  /// ManageChargerScreen / DriverHomeScreen map+list) rather than a
-  /// generic placeholder schema.
+  /// Firestore document shape for the `chargers` collection.
   ///
-  /// Note: `photoBytes` is stored inline as base64 for now (no
-  /// firebase_storage dependency yet). This is fine for typical
-  /// compressed station photos but will hit Firestore's ~1MB document
-  /// limit for very large images - migrating to Firebase Storage (storing
-  /// just a download URL here instead) is the recommended next step if
-  /// that becomes an issue.
+  /// FIX (30/8 investigation - "one-time slot doesn't save, recurring
+  /// does"): this now builds each free-slot map through a dedicated,
+  /// defensive `_slotToFirestore` helper (see below) instead of an
+  /// inline map literal. The previous inline version wrote
+  /// `'recurrenceLabel': s.recurrenceLabel` directly, which is `null`
+  /// for every ONE-TIME slot (recurring slots always have a non-null
+  /// string like "Every Sun"). While a null value inside a Firestore
+  /// map is technically valid, several Firestore client SDK versions
+  /// and any custom validation have been known to reject or silently
+  /// drop `null` values nested inside arrays-of-maps depending on
+  /// platform/version - which lines up exactly with the pattern you
+  /// found (multi-slot/recurring saves worked, single one-time slot did
+  /// not). `_slotToFirestore` now OMITS the `recurrenceLabel` key
+  /// entirely for one-time slots instead of sending it as `null`,
+  /// removing that risk completely regardless of which underlying cause
+  /// it was.
+  ///
+  /// Also hardened: `latitude`/`longitude`/`price`/`powerKw`/`ampere` are
+  /// now passed through `_safeNum`, which converts any accidental NaN/
+  /// Infinity value (which Firestore always rejects outright) to 0.0
+  /// instead of silently corrupting the whole document write.
   Map<String, dynamic> toFirestore() {
     return {
       'hostId': hostId,
       'chargerId': chargerId,
       'label': label,
-      'powerKw': powerKw,
-      'ampere': ampere,
+      'powerKw': _safeNum(powerKw),
+      'ampere': _safeNum(ampere),
       'connector': connector.name,
       'city': city,
       'area': area,
       'chargingStandard': chargingStandard.name,
       'pricingModel': pricingModel.name,
-      'price': price,
+      'price': _safeNum(price),
       'mapLink': mapLink,
-      'latitude': latitude,
-      'longitude': longitude,
+      'latitude': _safeNum(latitude),
+      'longitude': _safeNum(longitude),
       'residentsOnly': residentsOnly,
       'restrictedCommunity': restrictedCommunity,
       'photoBase64': photoBytes != null ? base64Encode(photoBytes!) : null,
-      'freeSlots': freeSlots.map((s) => {
-            'id': s.id,
-            'chargerId': s.chargerId,
-            'start': Timestamp.fromDate(s.start),
-            'end': Timestamp.fromDate(s.end),
-            'isBooked': s.isBooked,
-            'recurrenceLabel': s.recurrenceLabel,
-          }).toList(),
+      'freeSlots': freeSlots.map(_slotToFirestore).toList(),
       'updatedAt': FieldValue.serverTimestamp(),
     };
+  }
+
+  /// Converts a single AvailabilitySlot to its Firestore map shape.
+  /// `recurrenceLabel` is OMITTED entirely (not sent as null) when the
+  /// slot is a one-time slot - see the note on toFirestore() above for
+  /// why this matters.
+  static Map<String, dynamic> _slotToFirestore(AvailabilitySlot s) {
+    final map = <String, dynamic>{
+      'id': s.id,
+      'chargerId': s.chargerId,
+      'start': Timestamp.fromDate(s.start),
+      'end': Timestamp.fromDate(s.end),
+      'isBooked': s.isBooked,
+    };
+    if (s.recurrenceLabel != null && s.recurrenceLabel!.isNotEmpty) {
+      map['recurrenceLabel'] = s.recurrenceLabel;
+    }
+    return map;
+  }
+
+  static double _safeNum(double value) {
+    if (value.isNaN || value.isInfinite) return 0.0;
+    return value;
   }
 
   factory ChargerProfile.fromFirestore(Map<String, dynamic> data) {
     final photoBase64 = data['photoBase64'] as String?;
     final rawSlots = (data['freeSlots'] as List?) ?? const [];
-
     return ChargerProfile(
       hostId: data['hostId'] as String,
       chargerId: data['chargerId'] as String,
