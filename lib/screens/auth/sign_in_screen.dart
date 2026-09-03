@@ -2,6 +2,9 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../services/auth_service.dart';
+import '../../services/booking_service.dart';
+import '../../services/notification_service.dart';
+import '../../services/push_notification_service.dart';
 import '../../state/app_state.dart';
 import '../../theme/ps_ev_theme.dart';
 import '../../theme/ps_ev_app_bar.dart';
@@ -11,7 +14,6 @@ import 'register_screen.dart';
 /// via Firebase Authentication.
 class SignInScreen extends StatefulWidget {
   const SignInScreen({super.key});
-
   @override
   State<SignInScreen> createState() => _SignInScreenState();
 }
@@ -37,16 +39,20 @@ class _SignInScreenState extends State<SignInScreen> {
       _loading = true;
       _error = null;
     });
-
     try {
       await context.read<AuthService>().signIn(_emailCtrl.text.trim(), _passwordCtrl.text);
       if (!mounted) return;
-
       final uid = context.read<AuthService>().uid;
       if (uid != null) {
         await context.read<AppState>().setCurrentUserAndHydrate(uid);
+        if (!mounted) return;
+        // Same fix as RegisterScreen: start booking/notification sync
+        // and register this device for push immediately on sign-in,
+        // not only on the next cold app start.
+        context.read<BookingService>().hydrate(uid);
+        context.read<NotificationService>().listenFor(uid);
+        await PushNotificationService.initAndRegister(uid);
       }
-
       if (!mounted) return;
       Navigator.pop(context, true);
     } on FirebaseAuthException catch (e) {

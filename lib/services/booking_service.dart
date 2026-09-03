@@ -1,11 +1,15 @@
+import 'dart:async';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
 import '../models/booking.dart';
 import '../models/charger_profile.dart';
 import '../models/car_profile.dart';
 import '../models/enums.dart';
+import '../models/app_notification.dart';
 import 'wallet_service.dart';
 import 'pricing_service.dart';
+import 'notification_service.dart';
 
 /// Common base for errors that can occur when a driver tries to request a
 /// booking, so the UI can catch a single type and read `.message`.
@@ -35,42 +39,95 @@ class TimeRangeUnavailableException implements BookingRequestException {
 /// unrealistically short charging windows (e.g. 2 minutes).
 const int kMinBookingMinutes = 30;
 
+/// FIX: bookings are now persisted to, and kept live-synced from,
+/// Firestore's `bookings` collection - previously this service kept
+/// bookings ONLY in an in-memory `_bookings` list, which meant a booking
+/// created by a driver on their phone was NEVER visible to the host on a
+/// different phone, no matter how many times the host opened Manage
+/// Charger. That was the real cause of "the host isn't notified even
+/// when opening the station" - there was nothing to see, because the
+/// data literally never left the driver's device.
+///
+/// Two live listeners are kept (bookings where I am the driver, and
+/// bookings where I am the host), merged into one local list - since a
+/// single user can be both a driver and a host. Every mutation
+/// (createRequest, hostRespond, driverCancel, adminCancel, startSession,
+/// completeSession) now writes through to Firestore, and creates an
+/// AppNotification for the other party where relevant (see
+/// NotificationService) - that's the "sending notification is mandatory"
+/// requirement.
 class BookingService extends ChangeNotifier {
+  BookingService({required this.walletService, required this.notificationService, FirebaseFirestore? firestore})
+      : _db = firestore ?? FirebaseFirestore.instance;
   final _uuid = const Uuid();
   final WalletService walletService;
+  final NotificationService notificationService;
+  final FirebaseFirestore _db;
 
-  BookingService({required this.walletService});
+  final Map<String, Booking> _bookingsById = {};
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _asDriverSub;
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _asHostSub;
 
-  final List<Booking> _bookings = [];
+  List<Booking> get all => List.unmodifiable(_bookingsById.values);
 
-  List<Booking> get all => List.unmodifiable(_bookings);
+  /// Attaches live listeners for this user's bookings (as driver AND as
+  /// host). Call after sign-in/registration, and once at startup if
+  /// already signed in (see main.dart). Safe to call again on account
+  /// switch - cancels any previous listeners first.
+  void hydrate(String userId) {
+    _asDriverSub?.cancel();
+    _asHostSub?.cancel();
+    _asDriverSub = _db.collection('bookings').where('driverId', isEqualTo: userId).snapshots().listen(
+      (snapshot) => _mergeSnapshot(snapshot),
+      onError: (e) => debugPrint('BookingService: driver listener error: $e'),
+    );
+    _asHostSub = _db.collection('bookings').where('hostId', isEqualTo: userId).snapshots().listen(
+      (snapshot) => _mergeSnapshot(snapshot),
+      onError: (e) => debugPrint('BookingService: host listener error: $e'),
+    );
+  }
 
-  List<Booking> bookingsForDriver(String driverId) => _bookings.where((b) => b.driverId == driverId).toList();
+  void _mergeSnapshot(QuerySnapshot<Map<String, dynamic>> snapshot) {
+    for (final change in snapshot.docChanges) {
+      if (change.type == DocumentChangeType.removed) {
+        _bookingsById.remove(change.doc.id);
+      } else {
+        _bookingsById[change.doc.id] = Booking.fromFirestore(change.doc.id, change.doc.data()!);
+      }
+    }
+    notifyListeners();
+  }
 
-  List<Booking> ongoingForDriver(String driverId) => _bookings
+  void stopListening() {
+    _asDriverSub?.cancel();
+    _asHostSub?.cancel();
+    _bookingsById.clear();
+    notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _asDriverSub?.cancel();
+    _asHostSub?.cancel();
+    super.dispose();
+  }
+
+  List<Booking> bookingsForDriver(String driverId) =>
+      _bookingsById.values.where((b) => b.driverId == driverId).toList();
+  List<Booking> ongoingForDriver(String driverId) => _bookingsById.values
       .where((b) => b.driverId == driverId && BookingService.ongoingStatuses.contains(b.status))
       .toList();
-
   List<Booking> pendingApprovalsForHost(String hostId) =>
-      _bookings.where((b) => b.hostId == hostId && b.status == BookingStatus.pendingHostApproval).toList();
-
+      _bookingsById.values.where((b) => b.hostId == hostId && b.status == BookingStatus.pendingHostApproval).toList();
   List<Booking> confirmedForHost(String hostId) =>
-      _bookings.where((b) => b.hostId == hostId && b.status == BookingStatus.confirmed).toList();
-
+      _bookingsById.values.where((b) => b.hostId == hostId && b.status == BookingStatus.confirmed).toList();
   List<Booking> inProgressForHost(String hostId) =>
-      _bookings.where((b) => b.hostId == hostId && b.status == BookingStatus.inProgress).toList();
-
-  List<Booking> activeForHost(String hostId) => _bookings
+      _bookingsById.values.where((b) => b.hostId == hostId && b.status == BookingStatus.inProgress).toList();
+  List<Booking> activeForHost(String hostId) => _bookingsById.values
       .where((b) => b.hostId == hostId && (b.status == BookingStatus.confirmed || b.status == BookingStatus.inProgress))
       .toList();
 
-  Booking? findById(String id) {
-    try {
-      return _bookings.firstWhere((b) => b.id == id);
-    } catch (_) {
-      return null;
-    }
-  }
+  Booking? findById(String id) => _bookingsById[id];
 
   static const List<BookingStatus> ongoingStatuses = [
     BookingStatus.pendingWalletHold,
@@ -88,20 +145,35 @@ class BookingService extends ChangeNotifier {
   List<Booking> filterByCategory(String category) {
     switch (category) {
       case 'ongoing':
-        return _bookings.where((b) => ongoingStatuses.contains(b.status)).toList();
+        return _bookingsById.values.where((b) => ongoingStatuses.contains(b.status)).toList();
       case 'completed':
-        return _bookings.where((b) => b.status == BookingStatus.completed).toList();
+        return _bookingsById.values.where((b) => b.status == BookingStatus.completed).toList();
       case 'cancelled':
-        return _bookings.where((b) => cancelledStatuses.contains(b.status)).toList();
+        return _bookingsById.values.where((b) => cancelledStatuses.contains(b.status)).toList();
       default:
-        return List.of(_bookings);
+        return List.of(_bookingsById.values);
     }
   }
 
   /// Bookings for a specific charger that are still "live" (would block a
-  /// new overlapping request) - used by `isRangeAvailable` below.
+  /// new overlapping request) - used by `isRangeAvailable` below AND by
+  /// `bookedRangesFor` so the driver-facing UI can show exactly which
+  /// windows are taken instead of a generic "not available" message.
   List<Booking> _liveBookingsForCharger(String chargerId) =>
-      _bookings.where((b) => b.chargerId == chargerId && ongoingStatuses.contains(b.status)).toList();
+      _bookingsById.values.where((b) => b.chargerId == chargerId && ongoingStatuses.contains(b.status)).toList();
+
+  /// FIX for "the requestor doesn't know the new available times for the
+  /// same station - showing booked from-to is better": returns the
+  /// currently-booked (start, end) ranges for a charger, sorted
+  /// chronologically, so DriverHomeScreen can show e.g. "Booked 2:00 PM –
+  /// 4:00 PM" directly under a free window instead of only surfacing a
+  /// generic conflict error after the driver already tried and failed to
+  /// book that exact time.
+  List<({DateTime start, DateTime end})> bookedRangesFor(String chargerId) {
+    final ranges = _liveBookingsForCharger(chargerId).map((b) => (start: b.requestedStart, end: b.requestedEnd)).toList();
+    ranges.sort((a, b) => a.start.compareTo(b.start));
+    return ranges;
+  }
 
   /// Checks whether a CUSTOM time range from `start` up to (but not
   /// including) `end` can actually be booked on this charger:
@@ -121,14 +193,18 @@ class BookingService extends ChangeNotifier {
 
   /// Creates a booking request for a CUSTOM driver-chosen time range
   /// (which may be a sub-range of a larger host-defined free window).
-  Booking createRequest({
+  /// Persists the booking to Firestore and notifies the host (both an
+  /// in-app AppNotification and, via the Cloud Function trigger, a real
+  /// push notification to their device).
+  Future<Booking> createRequest({
     required String driverId,
+    required String driverName,
     required ChargerProfile charger,
     required DateTime requestedStart,
     required DateTime requestedEnd,
     required String? driverCommunity,
     required CarProfile driverCar,
-  }) {
+  }) async {
     if (driverCar.plateNumber.trim().isEmpty) {
       throw TimeRangeUnavailableException('Please add your car plate number in My Cars before booking.');
     }
@@ -180,66 +256,99 @@ class BookingService extends ChangeNotifier {
     final held = walletService.holdForBooking(driverId: driverId, bookingId: booking.id, amount: heldAmount);
     booking.walletHeld = held;
     booking.evaluateProgress();
-    _bookings.add(booking);
+    _bookingsById[booking.id] = booking;
     notifyListeners();
+    await _db.collection('bookings').doc(booking.id).set(booking.toFirestore());
+    // Mandatory notification to the host - see class doc above.
+    await notificationService.notify(
+      recipientId: charger.hostId,
+      type: NotificationType.bookingRequested,
+      title: 'New booking request',
+      body: '$driverName requested to book "${charger.label}" for '
+          '${_timeRangeLabel(requestedStart, requestedEnd)}.',
+      bookingId: booking.id,
+      chargerId: charger.chargerId,
+    );
     return booking;
   }
 
-  void hostRespond(String bookingId, {required bool approve}) {
+  Future<void> hostRespond(String bookingId, {required bool approve}) async {
     final booking = findById(bookingId);
     if (booking == null) return;
     if (!approve) {
       booking.status = BookingStatus.declinedByHost;
       if (booking.walletHeld) walletService.releaseHold(driverId: booking.driverId, bookingId: booking.id);
-      notifyListeners();
-      return;
+    } else {
+      booking.hostApproved = true;
+      booking.evaluateProgress();
     }
-    booking.hostApproved = true;
-    booking.evaluateProgress();
     notifyListeners();
+    await _db.collection('bookings').doc(bookingId).set(booking.toFirestore(), SetOptions(merge: true));
+    await notificationService.notify(
+      recipientId: booking.driverId,
+      type: approve ? NotificationType.bookingApproved : NotificationType.bookingDeclined,
+      title: approve ? 'Booking approved!' : 'Booking declined',
+      body: approve
+          ? 'Your booking at "${booking.chargerName}" was approved. Head over when it\'s time to charge.'
+          : 'Your booking request at "${booking.chargerName}" was declined. Your held funds were refunded.',
+      bookingId: booking.id,
+      chargerId: booking.chargerId,
+    );
   }
 
-  void driverCancel(String bookingId) {
+  Future<void> driverCancel(String bookingId) async {
     final booking = findById(bookingId);
     if (booking == null || !ongoingStatuses.contains(booking.status)) return;
     booking.status = BookingStatus.cancelledByDriver;
     if (booking.walletHeld) walletService.releaseHold(driverId: booking.driverId, bookingId: booking.id);
     notifyListeners();
+    await _db.collection('bookings').doc(bookingId).set(booking.toFirestore(), SetOptions(merge: true));
   }
 
-  void adminCancel(String bookingId) {
+  Future<void> adminCancel(String bookingId) async {
     final booking = findById(bookingId);
     if (booking == null || !ongoingStatuses.contains(booking.status)) return;
     booking.status = BookingStatus.cancelledByAdmin;
     if (booking.walletHeld) walletService.releaseHold(driverId: booking.driverId, bookingId: booking.id);
     notifyListeners();
+    await _db.collection('bookings').doc(bookingId).set(booking.toFirestore(), SetOptions(merge: true));
   }
 
-  bool confirmAccessByQr(String bookingId, String scannedPayload) {
+  Future<bool> confirmAccessByQr(String bookingId, String scannedPayload) async {
     final booking = findById(bookingId);
     if (booking == null) return false;
     final ok = booking.validateScan(scannedPayload, DateTime.now());
     notifyListeners();
+    if (ok) await _db.collection('bookings').doc(bookingId).set(booking.toFirestore(), SetOptions(merge: true));
     return ok;
   }
 
-  bool startSession(String bookingId) {
+  Future<bool> startSession(String bookingId) async {
     final booking = findById(bookingId);
     if (booking == null) return false;
     final ok = booking.startSession(DateTime.now());
     notifyListeners();
+    if (ok) {
+      await _db.collection('bookings').doc(bookingId).set(booking.toFirestore(), SetOptions(merge: true));
+      await notificationService.notify(
+        recipientId: booking.hostId,
+        type: NotificationType.sessionStarted,
+        title: 'Charging session started',
+        body: 'The driver has started charging at "${booking.chargerName}".',
+        bookingId: booking.id,
+        chargerId: booking.chargerId,
+      );
+    }
     return ok;
   }
 
   /// Stops an in-progress session, settles the actual charging cost
-  /// against the wallet hold, and - new - charges an overstay penalty
-  /// (see Booking.completeAndSettle / kOverstayGraceMinutes /
+  /// against the wallet hold, and charges an overstay penalty (see
+  /// Booking.completeAndSettle / kOverstayGraceMinutes /
   /// kOverstayPenaltyPerMinute) if the driver left the car
   /// parked/plugged in more than the grace period past the originally
-  /// booked end time. The penalty is charged separately from the normal
-  /// settlement since the wallet hold only ever covers the booked
-  /// duration, not extra overstay time.
-  void completeSession(String bookingId) {
+  /// booked end time.
+  Future<void> completeSession(String bookingId) async {
     final booking = findById(bookingId);
     if (booking == null) return;
     booking.completeAndSettle(DateTime.now());
@@ -260,5 +369,16 @@ class BookingService extends ChangeNotifier {
       );
     }
     notifyListeners();
+    await _db.collection('bookings').doc(bookingId).set(booking.toFirestore(), SetOptions(merge: true));
+  }
+
+  static String _timeRangeLabel(DateTime start, DateTime end) {
+    String two(int n) => n.toString().padLeft(2, '0');
+    String fmt(DateTime d) {
+      final h = d.hour % 12 == 0 ? 12 : d.hour % 12;
+      final ampm = d.hour >= 12 ? 'PM' : 'AM';
+      return '$h:${two(d.minute)} $ampm';
+    }
+    return '${fmt(start)} – ${fmt(end)}';
   }
 }

@@ -3,6 +3,9 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../services/auth_service.dart';
+import '../../services/booking_service.dart';
+import '../../services/notification_service.dart';
+import '../../services/push_notification_service.dart';
 import '../../utils/phone_number_validator.dart';
 import '../../theme/ps_ev_theme.dart';
 import '../../theme/ps_ev_app_bar.dart';
@@ -28,10 +31,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   bool _submitting = false;
   String? _error;
   bool _obscurePassword = true;
-  // Country dial code for the phone number, defaulting to Egypt. Israel is
-  // intentionally excluded from kCountryDialCodes.
   String _countryCode = '+20';
-  // Item #5: must be checked before registration can proceed.
   bool _agreedToTerms = false;
 
   @override
@@ -54,7 +54,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
-    // Item #5: block registration until Terms & Privacy are accepted.
     if (!_agreedToTerms) {
       setState(() => _error = 'Please agree to the Terms & Conditions and Privacy Policy to continue.');
       return;
@@ -64,13 +63,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       _error = null;
     });
     try {
-      // Item #1: combine the country code with the typed local number
-      // WITHOUT the redundant leading 0 (e.g. "+20" + "1001234567", not
-      // "+20" + "01001234567").
       final normalizedPhone = PhoneNumberValidator.toE164(_phoneCtrl.text, countryCode: _countryCode);
-      // Item #6: reject duplicate phone numbers up front (email
-      // duplicates are already rejected natively by Firebase Auth's
-      // createUserWithEmailAndPassword below, via 'email-already-in-use').
       final phoneTaken = await context.read<AuthService>().isPhoneNumberTaken(normalizedPhone);
       if (phoneTaken) {
         setState(() {
@@ -90,6 +83,17 @@ class _RegisterScreenState extends State<RegisterScreen> {
       final uid = context.read<AuthService>().uid;
       if (uid != null) {
         await context.read<AppState>().setCurrentUserAndHydrate(uid);
+        if (!mounted) return;
+        // Item #5/#6 of the 31/8 update: bookings and notifications must
+        // start syncing IMMEDIATELY after registration, not only on the
+        // next cold app start (which is when main.dart would otherwise
+        // be the only place this runs). Without this, a driver who
+        // registers and immediately books wouldn't see live booking
+        // status updates or receive notifications until they fully
+        // restart the app.
+        context.read<BookingService>().hydrate(uid);
+        context.read<NotificationService>().listenFor(uid);
+        await PushNotificationService.initAndRegister(uid);
       }
       if (!mounted) return;
       Navigator.pop(context, true);
@@ -179,11 +183,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
                               keyboardType: TextInputType.phone,
                               maxLength: 11,
                               decoration: const InputDecoration(counterText: '', hintText: '01xxxxxxxxx'),
-                              // Item #1: validated per the selected country
-                              // code - the leading 0 is expected here (as
-                              // typed), and is stripped only when combined
-                              // with the country code for storage (see
-                              // PhoneNumberValidator.toE164 in _submit()).
                               validator: (v) => PhoneNumberValidator.validate(v, countryCode: _countryCode),
                             ),
                           ),
@@ -211,12 +210,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         obscureText: _obscurePassword,
                         validator: (v) => (v != _passwordCtrl.text) ? 'Passwords do not match' : null,
                       ),
-                      // ---------------------------------------------
-                      // Item #5: Terms & Conditions / Privacy Policy
-                      // agreement checkbox, required before registering.
-                      // Both links are underlined and open the live
-                      // Firestore-backed legal document screen.
-                      // ---------------------------------------------
                       const SizedBox(height: 14),
                       Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -293,8 +286,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
 /// Ensures the user is authenticated before proceeding with an action that
 /// requires an account (adding a car, adding a charger, booking, etc.).
-/// If the user is a guest, presents a choice between Sign In (existing
-/// account) and Register (new account) before allowing the action.
 Future<bool> ensureRegistered(BuildContext context) async {
   final auth = context.read<AuthService>();
   if (auth.isRegistered) return true;

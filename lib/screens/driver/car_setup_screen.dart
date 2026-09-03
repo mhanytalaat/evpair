@@ -6,6 +6,7 @@ import '../../models/enums.dart';
 import '../../theme/ps_ev_theme.dart';
 import '../../theme/ps_ev_app_bar.dart';
 import '../../utils/plate_number_validator.dart';
+import '../../widgets/plate_number_field.dart';
 
 class CarSetupScreen extends StatefulWidget {
   final CarProfile? existing;
@@ -17,7 +18,12 @@ class CarSetupScreen extends StatefulWidget {
 class _CarSetupScreenState extends State<CarSetupScreen> {
   final _formKey = GlobalKey<FormState>();
   late TextEditingController _rangeCtrl;
-  late TextEditingController _plateCtrl;
+  // Item #4 of the 31/8 update: the free-text plate field is replaced by
+  // a segmented PlateNumberField (digits on the left, individual letter
+  // boxes on the right - matching the real Egyptian plate layout). This
+  // widget reports the combined normalized plate string via onChanged;
+  // we keep it here and re-validate with PlateNumberValidator on submit.
+  String _plateValue = '';
   late double _ampere;
   late String _community;
   late String _brand;
@@ -30,16 +36,11 @@ class _CarSetupScreenState extends State<CarSetupScreen> {
   void initState() {
     super.initState();
     final e = widget.existing;
-    // Defensive against the Firestore-backed kCarBrandModels having
-    // changed since this car was saved (e.g. a brand was renamed/removed
-    // in the console) - falls back to the first available brand/model
-    // instead of throwing, the same defensive pattern already used for
-    // City/Area in LocationPickerField.
     _brand = (e != null && kCarBrandModels.containsKey(e.brand)) ? e.brand : kCarBrandModels.keys.first;
     final modelsForBrand = kCarBrandModels[_brand] ?? const ['Other Model'];
     _model = (e != null && modelsForBrand.contains(e.model)) ? e.model : modelsForBrand.first;
     _rangeCtrl = TextEditingController(text: e?.rangeKm.toStringAsFixed(0) ?? '450');
-    _plateCtrl = TextEditingController(text: e?.plateNumber ?? '');
+    _plateValue = e?.plateNumber ?? '';
     _ampere = e?.maxAmpere ?? 32;
     _community = e?.community ?? kCommunityOptions.first;
     _chargingStandard = e?.chargingStandard ?? ChargingStandard.europeanCcs2;
@@ -50,21 +51,23 @@ class _CarSetupScreenState extends State<CarSetupScreen> {
   @override
   void dispose() {
     _rangeCtrl.dispose();
-    _plateCtrl.dispose();
     super.dispose();
   }
 
   void _submit() {
-    // Validate the whole form first (this now includes the plate number
-    // field's digits-then-letters check via PlateNumberValidator, which
-    // accepts any of Egypt's three regional shapes: 3 digits+3 letters
-    // (Cairo), 4 digits+2 letters (Giza), or 4 digits+3 letters (other
-    // governorates)), so a malformed plate is caught with an inline error
-    // message instead of silently being saved and only surfacing later
-    // as a confusing failure at booking time in BookingService.createRequest.
     if (!_formKey.currentState!.validate()) return;
+    // The plate itself is validated separately below (PlateNumberField
+    // doesn't participate in the Form's validator list since it isn't a
+    // single TextFormField) - do it explicitly here before saving.
+    final plateError = PlateNumberValidator.validate(_plateValue);
+    if (plateError != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(plateError), backgroundColor: PsEvColors.red),
+      );
+      return;
+    }
     final app = context.read<AppState>();
-    final plate = PlateNumberValidator.normalize(_plateCtrl.text);
+    final plate = PlateNumberValidator.normalize(_plateValue);
     final car = CarProfile(
       carId: widget.existing?.carId ?? 'car_${DateTime.now().millisecondsSinceEpoch}',
       driverId: app.currentUserId ?? '',
@@ -82,15 +85,17 @@ class _CarSetupScreenState extends State<CarSetupScreen> {
     } else {
       app.addCar(car);
     }
-    Navigator.pop(context);
+    // Pop with the saved car so a caller that pushed this screen while
+    // resuming a booking (see BookingRequestScreen's "Add a Car" prompt)
+    // can immediately continue without the driver needing to navigate
+    // back manually - Navigator.pop already returns control to whatever
+    // screen is beneath this one on the stack with its state fully
+    // intact (chosen times, selected station, etc.).
+    Navigator.pop(context, car);
   }
 
   @override
   Widget build(BuildContext context) {
-    // Read live every build (not just in initState) so a brand added in
-    // Firestore while this screen is open still shows up if the user
-    // backs out and re-enters - kCarBrandModels itself is just a getter
-    // over the current live map, so this is always cheap.
     final modelsForBrand = kCarBrandModels[_brand] ?? const ['Other Model'];
     final connectorsForStandard = _chargingStandard.compatibleConnectors;
     return Scaffold(
@@ -126,24 +131,12 @@ class _CarSetupScreenState extends State<CarSetupScreen> {
                     ),
                     const SizedBox(height: 12),
                     const Text('Car plate number', style: TextStyle(fontSize: 12, color: PsEvColors.mutedText)),
-                    const SizedBox(height: 4),
-                    TextFormField(
-                      controller: _plateCtrl,
-                      textCapitalization: TextCapitalization.characters,
-                      decoration: const InputDecoration(hintText: '123-ABC or 1234-AB'),
-                      // Egyptian plates: digits first, then letters.
-                      // Cairo: 3 digits+3 letters. Giza: 4 digits+2
-                      // letters. Other governorates: 4 digits+3 letters.
-                      validator: PlateNumberValidator.validate,
+                    const SizedBox(height: 6),
+                    PlateNumberField(
+                      initialValue: _plateValue,
+                      onChanged: (v) => _plateValue = v,
                     ),
-                    const Padding(
-                      padding: EdgeInsets.only(top: 4, bottom: 12),
-                      child: Text(
-                        'Format: digits then letters - e.g. 123-ABC (Cairo, 3+3), 1234-AB (Giza, 4+2), '
-                        'or 1234-ABC (other governorates, 4+3). Required for host arrival verification.',
-                        style: TextStyle(fontSize: 11, color: PsEvColors.emerald),
-                      ),
-                    ),
+                    const SizedBox(height: 8),
                     const Text('Charging standard', style: TextStyle(fontSize: 12, color: PsEvColors.mutedText)),
                     const SizedBox(height: 4),
                     DropdownButtonFormField<ChargingStandard>(

@@ -3,11 +3,17 @@ import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
 import '../models/enums.dart';
 import '../models/wallet_transaction.dart';
+import '../models/app_notification.dart';
+import 'notification_service.dart';
 
 class WalletService extends ChangeNotifier {
-  WalletService({FirebaseFirestore? firestore}) : _db = firestore ?? FirebaseFirestore.instance;
-
+  WalletService({FirebaseFirestore? firestore, this.notificationService}) : _db = firestore ?? FirebaseFirestore.instance;
   final FirebaseFirestore _db;
+  /// Optional so existing tests/usages that don't care about
+  /// notifications still work - but main.dart always provides a real
+  /// one, which is what actually sends the "mandatory" top-up
+  /// approved/rejected notification to the driver (see reviewTopUp).
+  final NotificationService? notificationService;
   final _uuid = const Uuid();
 
   final Map<String, double> _balances = {};
@@ -28,15 +34,6 @@ class WalletService extends ChangeNotifier {
   // Firestore hydration
   // ---------------------------------------------------------------------
 
-  /// Loads this user's wallet balance, ledger history, and their own
-  /// top-up requests from Firestore. Call this once right after sign-in
-  /// (and again after auto sign-in on app startup, from main.dart).
-  ///
-  /// Without this call, WalletService only ever holds an in-memory map
-  /// that starts empty on every cold launch - balance changes were being
-  /// applied to `_balances` and never read back from Firestore, which is
-  /// exactly why the wallet balance appeared to "disappear" after signing
-  /// out and signing back in.
   Future<void> hydrateFromFirestore(String userId) async {
     try {
       final walletDoc = await _db.collection('wallets').doc(userId).get();
@@ -44,7 +41,6 @@ class WalletService extends ChangeNotifier {
       if (data != null && data['balance'] != null) {
         _balances[userId] = (data['balance'] as num).toDouble();
       }
-
       final ledgerSnapshot = await _db
           .collection('wallets')
           .doc(userId)
@@ -52,29 +48,22 @@ class WalletService extends ChangeNotifier {
           .orderBy('timestamp', descending: true)
           .limit(200)
           .get();
-
       _ledger.removeWhere((e) => e.userId == userId);
       for (final doc in ledgerSnapshot.docs) {
         _ledger.add(_ledgerFromDoc(userId, doc.id, doc.data()));
       }
-
       final topUpSnapshot =
           await _db.collection('topUpRequests').where('driverId', isEqualTo: userId).get();
-
       _topUpRequests.removeWhere((t) => t.driverId == userId);
       for (final doc in topUpSnapshot.docs) {
         _topUpRequests.add(_topUpFromDoc(doc.id, doc.data()));
       }
-
       notifyListeners();
     } catch (e) {
       debugPrint('WalletService.hydrateFromFirestore failed: $e');
     }
   }
 
-  /// Host/admin top-up review screens need to see pending requests from
-  /// every driver, not just the signed-in user, so this is loaded
-  /// separately (e.g. when opening the admin top-up review screen).
   Future<void> hydrateAllTopUpRequests() async {
     try {
       final snapshot = await _db.collection('topUpRequests').get();
@@ -88,9 +77,7 @@ class WalletService extends ChangeNotifier {
   }
 
   // ---------------------------------------------------------------------
-  // Mutations (each now writes through to Firestore in addition to
-  // updating in-memory state, so a fresh sign-in always sees the latest
-  // balance instead of resetting to 0).
+  // Mutations
   // ---------------------------------------------------------------------
 
   TopUpRequest submitTopUp({
@@ -99,6 +86,7 @@ class WalletService extends ChangeNotifier {
     required PaymentMethod method,
     required String referenceNote,
     required String proofImagePath,
+    String? proofImageBase64,
   }) {
     final request = TopUpRequest(
       id: _uuid.v4(),
@@ -107,6 +95,7 @@ class WalletService extends ChangeNotifier {
       method: method,
       referenceNote: referenceNote,
       proofImagePath: proofImagePath,
+      proofImageBase64: proofImageBase64,
     );
     _topUpRequests.add(request);
     notifyListeners();
@@ -114,12 +103,16 @@ class WalletService extends ChangeNotifier {
     return request;
   }
 
+  /// Approves/rejects a pending top-up. Now ALSO sends a mandatory
+  /// notification to the driver either way (approved -> credited amount,
+  /// rejected -> reason) - see NotificationService. Previously there was
+  /// no notification at all for this event; the driver would only find
+  /// out by manually reopening the Wallet screen.
   void reviewTopUp(String requestId, {required bool approve, String? adminNote}) {
     final request = _topUpRequests.firstWhere((t) => t.id == requestId);
     request.status = approve ? TopUpStatus.approved : TopUpStatus.rejected;
     request.reviewedAt = DateTime.now();
     request.adminNote = adminNote;
-
     if (approve) {
       final entry = WalletLedgerEntry(
         id: _uuid.v4(),
@@ -132,9 +125,16 @@ class WalletService extends ChangeNotifier {
       _persistBalance(request.driverId);
       _persistLedgerEntry(entry);
     }
-
     _persistTopUp(request);
     notifyListeners();
+    notificationService?.notify(
+      recipientId: request.driverId,
+      type: approve ? NotificationType.topUpApproved : NotificationType.topUpRejected,
+      title: approve ? 'Top-up approved!' : 'Top-up rejected',
+      body: approve
+          ? '${request.amount.toStringAsFixed(0)} EGP has been added to your wallet. You can now complete your booking.'
+          : 'Your top-up request could not be verified.${adminNote != null ? ' Reason: $adminNote' : ' Please try again with clearer proof.'}',
+    );
   }
 
   void seedBalance(String userId, double amount) {
@@ -193,7 +193,6 @@ class WalletService extends ChangeNotifier {
   }) {
     final heldAmount = _heldForBooking.remove(bookingId);
     if (heldAmount == null) return;
-
     final refund = heldAmount - actualCost;
     if (refund > 0) {
       final refundEntry = WalletLedgerEntry(
@@ -207,7 +206,6 @@ class WalletService extends ChangeNotifier {
       _persistBalance(driverId);
       _persistLedgerEntry(refundEntry);
     }
-
     final hostShare = actualCost * (1 - commissionRate);
     final hostEntry = WalletLedgerEntry(
       id: _uuid.v4(),
@@ -219,18 +217,9 @@ class WalletService extends ChangeNotifier {
     _ledger.add(hostEntry);
     _persistBalance(hostId);
     _persistLedgerEntry(hostEntry);
-
     notifyListeners();
   }
 
-  /// Charges a driver an overstay penalty (see Booking.completeAndSettle /
-  /// kOverstayGraceMinutes / kOverstayPenaltyPerMinute) for leaving a car
-  /// parked/plugged in past the booked end time. Unlike holdForBooking,
-  /// this is not gated on the driver having enough balance - the balance
-  /// is simply allowed to go negative, representing an amount owed. A
-  /// majority share is passed to the host as compensation for the station
-  /// being blocked past the reserved window, similar to settleBooking's
-  /// commission split.
   void chargeOverstayPenalty({
     required String driverId,
     required String hostId,
@@ -240,7 +229,6 @@ class WalletService extends ChangeNotifier {
     double hostShareRate = 0.80,
   }) {
     if (penaltyAmount <= 0) return;
-
     final driverEntry = WalletLedgerEntry(
       id: _uuid.v4(),
       userId: driverId,
@@ -251,7 +239,6 @@ class WalletService extends ChangeNotifier {
     _ledger.add(driverEntry);
     _persistBalance(driverId);
     _persistLedgerEntry(driverEntry);
-
     final hostShare = (penaltyAmount * hostShareRate).roundToDouble();
     final hostEntry = WalletLedgerEntry(
       id: _uuid.v4(),
@@ -263,18 +250,9 @@ class WalletService extends ChangeNotifier {
     _ledger.add(hostEntry);
     _persistBalance(hostId);
     _persistLedgerEntry(hostEntry);
-
     notifyListeners();
   }
 
-  /// Direct charge for BUYING an equipment item (cable/adaptor/home
-  /// station) from the equipment marketplace - see PartnerService. Unlike
-  /// holdForBooking this is not a temporary hold, it's an immediate
-  /// purchase charge; the full amount goes to whoever listed the item
-  /// (a partner, or kPlatformOwnerId for EVPair-owned stock). Like the
-  /// overstay penalty, the driver's balance is allowed to go negative
-  /// rather than silently failing, since this mirrors a real purchase
-  /// obligation.
   void payForEquipment({
     required String driverId,
     required String ownerId,
@@ -282,7 +260,6 @@ class WalletService extends ChangeNotifier {
     required double amount,
   }) {
     if (amount <= 0) return;
-
     final driverEntry = WalletLedgerEntry(
       id: _uuid.v4(),
       userId: driverId,
@@ -293,7 +270,6 @@ class WalletService extends ChangeNotifier {
     _ledger.add(driverEntry);
     _persistBalance(driverId);
     _persistLedgerEntry(driverEntry);
-
     final ownerEntry = WalletLedgerEntry(
       id: _uuid.v4(),
       userId: ownerId,
@@ -304,18 +280,11 @@ class WalletService extends ChangeNotifier {
     _ledger.add(ownerEntry);
     _persistBalance(ownerId);
     _persistLedgerEntry(ownerEntry);
-
     notifyListeners();
   }
 
   // ---------------------------------------------------------------------
-  // Firestore write helpers. These are intentionally fire-and-forget
-  // (not awaited by the mutation methods above) so none of the existing
-  // synchronous call sites in booking_service.dart or the UI need to
-  // change. Failures are caught and logged instead of thrown, so a
-  // transient network error never crashes the app - it just means that
-  // particular change will be retried next time hydrateFromFirestore
-  // runs against whatever the server currently has.
+  // Firestore write helpers
   // ---------------------------------------------------------------------
 
   Future<void> _persistBalance(String userId) {
@@ -357,6 +326,7 @@ class WalletService extends ChangeNotifier {
             'method': request.method.name,
             'referenceNote': request.referenceNote,
             'proofImagePath': request.proofImagePath,
+            'proofImageBase64': request.proofImageBase64,
             'status': request.status.name,
             'requestedAt': Timestamp.fromDate(request.requestedAt),
             'reviewedAt': request.reviewedAt == null ? null : Timestamp.fromDate(request.reviewedAt!),
@@ -391,6 +361,7 @@ class WalletService extends ChangeNotifier {
       ),
       referenceNote: data['referenceNote'] as String? ?? '',
       proofImagePath: data['proofImagePath'] as String? ?? '',
+      proofImageBase64: data['proofImageBase64'] as String?,
       status: TopUpStatus.values.firstWhere(
         (s) => s.name == data['status'],
         orElse: () => TopUpStatus.pendingProofReview,

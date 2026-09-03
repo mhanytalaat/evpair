@@ -1,4 +1,4 @@
-import 'enums.dart';
+import '../models/enums.dart';
 
 class TopUpRequest {
   final String id;
@@ -7,6 +7,13 @@ class TopUpRequest {
   final PaymentMethod method;
   final String referenceNote;
   final String proofImagePath;
+  /// Base64-encoded screenshot proof of the payment (InstaPay/Vodafone
+  /// Cash confirmation). Stored directly on the Firestore document, same
+  /// pattern already used for profile photos and charger photos
+  /// elsewhere in the app (avoids Firebase Storage's CORS setup on
+  /// Flutter Web). Null only for legacy requests submitted before this
+  /// field existed.
+  final String? proofImageBase64;
   TopUpStatus status;
   DateTime requestedAt;
   DateTime? reviewedAt;
@@ -19,6 +26,7 @@ class TopUpRequest {
     required this.method,
     required this.referenceNote,
     required this.proofImagePath,
+    this.proofImageBase64,
     this.status = TopUpStatus.pendingProofReview,
     DateTime? requestedAt,
     this.reviewedAt,

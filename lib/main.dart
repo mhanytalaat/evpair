@@ -9,6 +9,8 @@ import 'services/rating_service.dart';
 import 'services/locations_service.dart';
 import 'services/power_options_service.dart';
 import 'services/car_models_service.dart';
+import 'services/notification_service.dart';
+import 'services/push_notification_service.dart';
 import 'state/app_state.dart';
 import 'theme/ps_ev_theme.dart';
 import 'screens/root/app_root.dart';
@@ -17,18 +19,6 @@ import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
 
 Future<void> main() async {
-  // Everything now runs inside a guarded zone so that ANY uncaught error
-  // (Firebase init failure, Firestore hydrate failure, network issue,
-  // etc.) shows a friendly EVPair error screen instead of a hard iOS
-  // "EVPair Crashed" system dialog with no useful info for the tester.
-  //
-  // IMPORTANT CAVEAT (see chat): this guard only catches DART-level
-  // exceptions. It cannot catch native iOS crashes that happen before
-  // Flutter's engine finishes starting - e.g. a GoogleService-Info.plist
-  // bundle ID mismatch, or a missing Info.plist permission usage string
-  // (NSLocationWhenInUseUsageDescription, NSCameraUsageDescription,
-  // NSPhotoLibraryUsageDescription). Those must be fixed at the native
-  // project level, not in this file.
   runZonedGuarded(() async {
     WidgetsFlutterBinding.ensureInitialized();
     FlutterError.onError = (FlutterErrorDetails details) {
@@ -45,28 +35,37 @@ Future<void> main() async {
       await Firebase.initializeApp(
         options: DefaultFirebaseOptions.currentPlatform,
       );
-      final walletService = WalletService();
+      // Notifications (in-app, Firestore-backed) must exist before
+      // WalletService/BookingService, since both now create
+      // notifications as part of their normal mutations (top-up
+      // review, booking request/approve/decline).
+      final notificationService = NotificationService();
+      final walletService = WalletService(notificationService: notificationService);
       final authService = AuthService();
       await authService.tryAutoSignIn();
       final appState = AppState();
       if (authService.uid != null) {
         appState.currentUserId = authService.uid;
       }
-      // Governorates/areas live in Firestore (auto-seeded from the
-      // bundled list on first run) - see services/locations_service.dart.
       final locationsService = LocationsService();
       await locationsService.hydrate();
-      // kW options in Firestore: same auto-seed-then-read-live pattern -
-      // see services/power_options_service.dart.
       final powerOptionsService = PowerOptionsService();
       await powerOptionsService.hydrate();
-      // Car brand/model options in Firestore: same pattern again - see
-      // services/car_models_service.dart.
       final carModelsService = CarModelsService();
       await carModelsService.hydrate();
       await appState.hydrateFromFirestore();
+      final bookingService = BookingService(walletService: walletService, notificationService: notificationService);
       if (authService.uid != null) {
         await walletService.hydrateFromFirestore(authService.uid!);
+        // Live listeners for this user's bookings (as driver AND host)
+        // and notifications - see booking_service.dart/notification_service.dart.
+        // Also register this device for push notifications (see
+        // push_notification_service.dart) - without this call, a
+        // notification document would still be created correctly, but
+        // there would be no device token to actually push to.
+        bookingService.hydrate(authService.uid!);
+        notificationService.listenFor(authService.uid!);
+        await PushNotificationService.initAndRegister(authService.uid!);
       }
       final partnerService = PartnerService(walletService: walletService);
       if (authService.uid != null) {
@@ -81,15 +80,14 @@ Future<void> main() async {
           providers: [
             ChangeNotifierProvider<AppState>.value(value: appState),
             ChangeNotifierProvider<WalletService>.value(value: walletService),
-            ChangeNotifierProvider(
-              create: (_) => BookingService(walletService: walletService),
-            ),
+            ChangeNotifierProvider<BookingService>.value(value: bookingService),
             ChangeNotifierProvider<AuthService>.value(value: authService),
             ChangeNotifierProvider<PartnerService>.value(value: partnerService),
             ChangeNotifierProvider<RatingService>.value(value: ratingService),
             ChangeNotifierProvider<LocationsService>.value(value: locationsService),
             ChangeNotifierProvider<PowerOptionsService>.value(value: powerOptionsService),
             ChangeNotifierProvider<CarModelsService>.value(value: carModelsService),
+            ChangeNotifierProvider<NotificationService>.value(value: notificationService),
           ],
           child: const EvPairApp(),
         ),
@@ -118,15 +116,6 @@ class EvPairApp extends StatelessWidget {
   }
 }
 
-/// Shown instead of a hard crash whenever Firebase init, auto sign-in,
-/// or the initial Firestore hydrate throws. Gives the tester a "Retry"
-/// action and a visible error string instead of iOS's generic
-/// "EVPair Crashed" dialog with no diagnostic value.
-///
-/// NOTE: this only ever runs if the crash happens in DART code. If the
-/// app crashes before this file even executes (see the caveat above),
-/// this screen never has a chance to appear - that's a strong signal
-/// the crash is native, not caught here.
 class StartupFailureApp extends StatelessWidget {
   final String error;
   const StartupFailureApp({super.key, required this.error});

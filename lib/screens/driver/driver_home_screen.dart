@@ -12,12 +12,14 @@ import '../../models/enums.dart';
 import '../../services/auth_service.dart';
 import '../../services/wallet_service.dart';
 import '../../services/booking_service.dart';
+import '../../services/notification_service.dart';
 import '../../services/map_launcher_service.dart';
 import '../../services/profile_photo_service.dart';
 import '../../theme/ps_ev_theme.dart';
 import '../auth/register_screen.dart';
 import '../profile/profile_screen.dart';
 import '../shared/location_picker_field.dart';
+import '../shared/notifications_screen.dart';
 import 'my_cars_screen.dart';
 import '../host/host_home_screen.dart';
 import '../partner/home_installation_screen.dart';
@@ -28,28 +30,14 @@ import 'my_bookings_screen.dart';
 
 enum _ChargerAccessState { standardMismatch, residentsOnlyLocked, full, available }
 
-/// Root/home screen. Full-screen map (like a ride-hailing home screen) with:
-///   - A floating search bar + filter icon pinned at the top (tapping
-///     either opens the City/Area/Availability filter sheet, using the
-///     shared curated Egypt location list - see LocationPickerField).
-///   - A floating "recenter to my location" button.
-///   - A floating "+" quick-add button (Cars / Stations / Equipment).
-///   - A live-session banner when a booking is confirmed/in-progress.
-///   - A draggable bottom sheet with the station list + selected station
-///     detail + free-window booking, same logic as before.
-///   - A floating 4-icon pill nav: Map (this screen, always shown active),
-///     Sessions, Wallet, Profile (now shows the user's photo if they've
-///     set one - see ProfilePhotoService).
-///
-/// STACK ORDERING NOTE: the recenter button, the quick-add "+" button,
-/// and the footer nav are all declared AFTER the DraggableScrollableSheet
-/// in the Stack's children list. Flutter Stacks paint later children on
-/// top of earlier ones - the sheet's opaque white surface (which can be
-/// up to 90% of the screen height when dragged up, and 40% by default)
-/// would otherwise cover and hide any floating button declared before it.
+/// Root/home screen. Full-screen map with a floating search/filter bar,
+/// a notification bell (with unread badge), a recenter button, a
+/// quick-add "+" button, a live-session banner, a draggable bottom sheet
+/// with the station list/detail/booking, and a floating 4-icon footer
+/// nav (Map / Sessions / Wallet / Profile, the last showing a
+/// notification-count badge too).
 class DriverHomeScreen extends StatefulWidget {
   const DriverHomeScreen({super.key});
-
   @override
   State<DriverHomeScreen> createState() => _DriverHomeScreenState();
 }
@@ -117,9 +105,6 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
   }
 
-  /// Recenters the map on the driver's current GPS location. Handles the
-  /// full permission flow (service disabled / denied / denied forever)
-  /// with a friendly message instead of throwing.
   Future<void> _recenterToMyLocation() async {
     try {
       final serviceEnabled = await Geolocator.isLocationServiceEnabled();
@@ -146,15 +131,9 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
     }
   }
 
-  // ---------------------------------------------------------------------
-  // Location + availability filter sheet - triggered from either the
-  // search bar or the filter icon beside it. City/Area now use the
-  // shared curated Egypt location list (LocationPickerField).
-  // ---------------------------------------------------------------------
   void _showFilterSheet(BuildContext context) {
     final app = context.read<AppState>();
     final auth = context.read<AuthService>();
-
     showModalBottomSheet(
       context: context,
       showDragHandle: true,
@@ -246,26 +225,6 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
     );
   }
 
-  // ---------------------------------------------------------------------
-  // Floating "+" quick-add sheet: Cars, Stations, Equipment.
-  //
-  // FIX for "bottom overflowed by 12 pixels" (yellow/black stripes) that
-  // appeared above "Check Equipment": the Column's total content height
-  // (title + 3 tiles + spacing), combined with the modal's drag handle
-  // and the device's bottom safe-area/home-indicator inset, could be
-  // very slightly taller than the space the sheet allocated before this
-  // fix - by a small, device-dependent margin (reported as 12px).
-  //
-  //   1. The Column is now wrapped in a SingleChildScrollView, so if the
-  //      content is ever taller than the available space (e.g. a very
-  //      small phone, or larger system font size), it scrolls instead
-  //      of overflowing and showing the warning stripes.
-  //   2. The bottom padding is now `20 + MediaQuery.of(context).padding
-  //      .bottom` instead of a flat `20` - this accounts for the actual
-  //      safe-area inset (e.g. the iPhone home-indicator bar) instead of
-  //      guessing a fixed value, which was the root mismatch causing the
-  //      overflow in the first place.
-  // ---------------------------------------------------------------------
   void _showQuickAddSheet(BuildContext context) {
     showModalBottomSheet(
       context: context,
@@ -374,24 +333,22 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
     final wallet = context.watch<WalletService>();
     final bookingService = context.watch<BookingService>();
     final auth = context.watch<AuthService>();
+    final notificationService = context.watch<NotificationService>();
     final allChargers = app.chargers;
     final walletBalance = wallet.balanceOf(app.currentUserId ?? '');
     final activeBooking = app.lastDriverBookingId == null ? null : bookingService.findById(app.lastDriverBookingId!);
     final hasActiveBooking = activeBooking != null &&
         (activeBooking.status == BookingStatus.confirmed || activeBooking.status == BookingStatus.inProgress);
-
     final chargers = allChargers.where((c) {
       if (_selectedCity != null && c.city != _selectedCity) return false;
       if (_selectedArea != null && c.area != _selectedArea) return false;
       if (_onlyAvailable && !c.hasAnyFreeSlot) return false;
       return true;
     }).toList();
-
     final filtersActive = _selectedCity != null || _selectedArea != null || _onlyAvailable;
     final searchLabel = _selectedArea != null
         ? '${_selectedArea!}, ${_selectedCity!}'
         : (_selectedCity ?? 'Find a charging station');
-
     if (allChargers.isEmpty) {
       return Scaffold(
         body: Stack(
@@ -418,6 +375,11 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
               ),
             ),
             Positioned(
+              top: MediaQuery.of(context).padding.top + 12,
+              right: 16,
+              child: _notificationBell(context, notificationService),
+            ),
+            Positioned(
               right: 16,
               bottom: MediaQuery.of(context).padding.bottom + 92,
               child: _quickAddButton(context),
@@ -426,37 +388,31 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
               left: 20,
               right: 20,
               bottom: MediaQuery.of(context).padding.bottom + 16,
-              child: _buildFloatingFooter(context, app, auth, hasActiveBooking),
+              child: _buildFloatingFooter(context, app, auth, hasActiveBooking, notificationService),
             ),
           ],
         ),
       );
     }
-
     final selected = chargers.isEmpty
         ? null
         : chargers.firstWhere(
             (c) => c.chargerId == (_selectedChargerId ?? chargers.first.chargerId),
             orElse: () => chargers.first,
           );
-
     final selectedState = selected == null ? null : _accessStateFor(selected, app.car);
     final standardMismatch = selectedState == _ChargerAccessState.standardMismatch;
     final residentsLocked = selectedState == _ChargerAccessState.residentsOnlyLocked;
     final bookable = selectedState == _ChargerAccessState.available || selectedState == _ChargerAccessState.full;
-
     final freeSlots = selected?.freeSlots ?? const [];
     final dateFmt = DateFormat('EEE, MMM d');
     final timeFmt = DateFormat('h:mm a');
-
     final avgLat = allChargers.map((c) => c.latitude).reduce((a, b) => a + b) / allChargers.length;
     final avgLng = allChargers.map((c) => c.longitude).reduce((a, b) => a + b) / allChargers.length;
-
     return Scaffold(
       extendBody: true,
       body: Stack(
         children: [
-          // Layer 1: Full-screen map.
           Positioned.fill(
             child: FlutterMap(
               mapController: _mapController,
@@ -502,8 +458,6 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
               ],
             ),
           ),
-
-          // Layer 2: Floating search bar + filter icon.
           Positioned(
             top: MediaQuery.of(context).padding.top + 12,
             left: 16,
@@ -578,11 +532,11 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
                     ),
                   ),
                 ),
+                const SizedBox(width: 10),
+                _notificationBell(context, notificationService),
               ],
             ),
           ),
-
-          // Layer 3: Live session banner.
           if (hasActiveBooking)
             Positioned(
               top: MediaQuery.of(context).padding.top + 70,
@@ -590,8 +544,6 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
               right: 16,
               child: _buildLiveSessionBanner(context, activeBooking),
             ),
-
-          // Layer 4: Draggable bottom sheet (station list + detail).
           DraggableScrollableSheet(
             controller: _sheetController,
             initialChildSize: 0.4,
@@ -874,30 +826,63 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
                               child: Text('No free windows right now for this charger.', style: TextStyle(color: PsEvColors.mutedText)),
                             )
                           else
-                            ...freeSlots.map((s) => Padding(
-                                  padding: const EdgeInsets.symmetric(vertical: 6),
-                                  child: Row(
-                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                    children: [
-                                      Expanded(
-                                        child: Column(
-                                          crossAxisAlignment: CrossAxisAlignment.start,
-                                          children: [
-                                            Text(dateFmt.format(s.start), style: const TextStyle(fontSize: 12, color: PsEvColors.mutedText)),
-                                            Text('${timeFmt.format(s.start)} – ${timeFmt.format(s.end)}', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
-                                            if (s.recurrenceLabel != null)
-                                              Text(s.recurrenceLabel!, style: const TextStyle(fontSize: 10, color: PsEvColors.emerald)),
-                                          ],
-                                        ),
+                            ...freeSlots.map((s) {
+                              // FIX (31/8 update, item #6): show exactly
+                              // which sub-ranges within THIS window are
+                              // already booked by another driver, instead
+                              // of only surfacing a generic "not
+                              // available" error after a driver tries and
+                              // fails to book that time. Pulled live from
+                              // BookingService so it updates instantly as
+                              // new requests come in (no need to reopen
+                              // this station to see fresh data).
+                              final booked = bookingService.bookedRangesFor(selected.chargerId)
+                                  .where((r) => !r.end.isBefore(s.start) && !r.start.isAfter(s.end))
+                                  .toList();
+                              return Padding(
+                                padding: const EdgeInsets.symmetric(vertical: 6),
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          Text(dateFmt.format(s.start), style: const TextStyle(fontSize: 12, color: PsEvColors.mutedText)),
+                                          Text('${timeFmt.format(s.start)} – ${timeFmt.format(s.end)}', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                                          if (s.recurrenceLabel != null)
+                                            Text(s.recurrenceLabel!, style: const TextStyle(fontSize: 10, color: PsEvColors.emerald)),
+                                          if (booked.isNotEmpty)
+                                            Padding(
+                                              padding: const EdgeInsets.only(top: 4),
+                                              child: Wrap(
+                                                spacing: 4,
+                                                runSpacing: 4,
+                                                children: booked
+                                                    .map((r) => Container(
+                                                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                                          decoration: BoxDecoration(color: PsEvColors.amberChip, borderRadius: BorderRadius.circular(999)),
+                                                          child: Text(
+                                                            'Booked ${timeFmt.format(r.start)}–${timeFmt.format(r.end)}',
+                                                            style: const TextStyle(fontSize: 10, color: PsEvColors.amberChipText, fontWeight: FontWeight.w700),
+                                                          ),
+                                                        ))
+                                                    .toList(),
+                                              ),
+                                            ),
+                                        ],
                                       ),
-                                      ElevatedButton(
-                                        style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8)),
-                                        onPressed: () => _onChooseTimeTap(context, selected, s),
-                                        child: const Text('Choose Time', style: TextStyle(fontSize: 12)),
-                                      ),
-                                    ],
-                                  ),
-                                )),
+                                    ),
+                                    ElevatedButton(
+                                      style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8)),
+                                      onPressed: () => _onChooseTimeTap(context, selected, s),
+                                      child: const Text('Choose Time', style: TextStyle(fontSize: 12)),
+                                    ),
+                                  ],
+                                ),
+                              );
+                            }),
                         ],
                       ],
                     ],
@@ -906,9 +891,6 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
               );
             },
           ),
-
-          // Layer 5: Recenter, quick-add "+", and footer - ALL declared
-          // after the sheet above so they always paint on top of it.
           Positioned(
             right: 16,
             bottom: MediaQuery.of(context).padding.bottom + 110,
@@ -927,20 +909,59 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
               ),
             ),
           ),
-
           Positioned(
             right: 16,
             bottom: MediaQuery.of(context).padding.bottom + 168,
             child: _quickAddButton(context),
           ),
-
           Positioned(
             left: 20,
             right: 20,
             bottom: MediaQuery.of(context).padding.bottom + 16,
-            child: _buildFloatingFooter(context, app, auth, hasActiveBooking),
+            child: _buildFloatingFooter(context, app, auth, hasActiveBooking, notificationService),
           ),
         ],
+      ),
+    );
+  }
+
+  /// Notification bell with a red unread-count badge, matching the same
+  /// visual style as the filter/recenter buttons. Tapping navigates to
+  /// the full notification list (see NotificationsScreen).
+  Widget _notificationBell(BuildContext context, NotificationService notificationService) {
+    final count = notificationService.unreadCount;
+    return Material(
+      color: Colors.white,
+      shape: const CircleBorder(),
+      elevation: 4,
+      shadowColor: Colors.black26,
+      child: InkWell(
+        customBorder: const CircleBorder(),
+        onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const NotificationsScreen())),
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              const Icon(Icons.notifications_outlined, size: 20, color: PsEvColors.slateText),
+              if (count > 0)
+                Positioned(
+                  top: -6,
+                  right: -6,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                    constraints: const BoxConstraints(minWidth: 16),
+                    decoration: const BoxDecoration(color: PsEvColors.red, shape: BoxShape.circle),
+                    child: Text(
+                      count > 9 ? '9+' : '$count',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.w800),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -1003,7 +1024,7 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
     );
   }
 
-  Widget _buildFloatingFooter(BuildContext context, AppState app, AuthService auth, bool hasActiveBooking) {
+  Widget _buildFloatingFooter(BuildContext context, AppState app, AuthService auth, bool hasActiveBooking, NotificationService notificationService) {
     return Container(
       height: 64,
       padding: const EdgeInsets.symmetric(horizontal: 10),
@@ -1061,7 +1082,7 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
             },
             child: Padding(
               padding: const EdgeInsets.all(6),
-              child: _footerProfileAvatar(auth, app.currentUserId),
+              child: _footerProfileAvatar(auth, app.currentUserId, notificationService.unreadCount),
             ),
           ),
         ],
@@ -1069,7 +1090,11 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
     );
   }
 
-  Widget _footerProfileAvatar(AuthService auth, String? uid) {
+  /// Now shows a small unread-count badge (same red-dot style already
+  /// used for `hasActiveBooking` on the Sessions icon) so notifications
+  /// are visible right from the home screen's footer, without needing
+  /// to open the bell menu first.
+  Widget _footerProfileAvatar(AuthService auth, String? uid, int unreadCount) {
     if (uid == null) {
       return CircleAvatar(
         radius: 16,
@@ -1077,26 +1102,41 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
         child: const Text('?', style: TextStyle(color: PsEvColors.mutedText, fontSize: 11, fontWeight: FontWeight.w800)),
       );
     }
-    return StreamBuilder<Uint8List?>(
-      stream: ProfilePhotoService.watch(uid),
-      builder: (context, snapshot) {
-        final bytes = snapshot.data;
-        return CircleAvatar(
-          radius: 16,
-          backgroundColor: auth.isRegistered ? PsEvColors.emerald : PsEvColors.slate200,
-          backgroundImage: bytes != null ? MemoryImage(bytes) : null,
-          child: bytes == null
-              ? Text(
-                  auth.isRegistered ? auth.initials : '?',
-                  style: TextStyle(
-                    color: auth.isRegistered ? Colors.white : PsEvColors.mutedText,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w800,
-                  ),
-                )
-              : null,
-        );
-      },
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        StreamBuilder<Uint8List?>(
+          stream: ProfilePhotoService.watch(uid),
+          builder: (context, snapshot) {
+            final bytes = snapshot.data;
+            return CircleAvatar(
+              radius: 16,
+              backgroundColor: auth.isRegistered ? PsEvColors.emerald : PsEvColors.slate200,
+              backgroundImage: bytes != null ? MemoryImage(bytes) : null,
+              child: bytes == null
+                  ? Text(
+                      auth.isRegistered ? auth.initials : '?',
+                      style: TextStyle(
+                        color: auth.isRegistered ? Colors.white : PsEvColors.mutedText,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    )
+                  : null,
+            );
+          },
+        ),
+        if (unreadCount > 0)
+          Positioned(
+            top: -2,
+            right: -2,
+            child: Container(
+              width: 10,
+              height: 10,
+              decoration: const BoxDecoration(color: PsEvColors.red, shape: BoxShape.circle, border: Border.fromBorderSide(BorderSide(color: Colors.white, width: 1.5))),
+            ),
+          ),
+      ],
     );
   }
 

@@ -1,0 +1,174 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isAdmin() {
+      return request.auth != null && request.auth.token.email == 'mhany@outlook.com';
+    }
+
+    // ---------------------------------------------------------------
+    // Egypt governorates/cities/areas, kW options, car brand/model
+    // options, and legal documents - all public read, admin-only write.
+    // ---------------------------------------------------------------
+    match /governorates/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    match /appSettings/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    match /carModels/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    match /legal/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // ---------------------------------------------------------------
+    // User profiles - PUBLIC READ (required for the duplicate-phone
+    // check during registration, which runs BEFORE the account exists -
+    // request.auth is still null at that point), owner-only write.
+    // ---------------------------------------------------------------
+    match /users/{userId} {
+      allow read: if true;
+      allow write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    match /cars/{carId} {
+      allow read: if request.auth != null && resource.data.driverId == request.auth.uid;
+      allow create: if request.auth != null && request.resource.data.driverId == request.auth.uid;
+      allow update, delete: if request.auth != null && resource.data.driverId == request.auth.uid;
+    }
+
+    match /chargers/{chargerId} {
+      allow read: if true;
+      allow create: if request.auth != null && request.resource.data.hostId == request.auth.uid;
+      allow update, delete: if request.auth != null && resource.data.hostId == request.auth.uid;
+    }
+
+    match /bookings/{bookingId} {
+      allow read: if request.auth != null &&
+        (resource.data.driverId == request.auth.uid || resource.data.hostId == request.auth.uid);
+      allow create: if request.auth != null && request.resource.data.driverId == request.auth.uid;
+      // Both the driver (start/stop session, cancel) and the host
+      // (approve/decline) need to update the SAME booking document.
+      allow update: if request.auth != null &&
+        (resource.data.driverId == request.auth.uid || resource.data.hostId == request.auth.uid);
+    }
+
+    // ---------------------------------------------------------------
+    // WALLETS + LEDGER. IMPORTANT ARCHITECTURAL NOTE: because this app
+    // currently settles money DIRECTLY from client devices (e.g. a
+    // driver's device credits the HOST's wallet when they stop a
+    // session; the ADMIN's device credits a DRIVER's wallet on top-up
+    // approval), a simple "only the owner can write their own wallet"
+    // rule would break these flows entirely - the writer is very often
+    // NOT the uid of the wallet being written to. The pragmatic rule
+    // below only requires the writer to be SIGNED IN, which restores
+    // full functionality but does not fully prevent a signed-in user
+    // from writing an arbitrary balance to someone else's wallet. For a
+    // production-grade fix, move settleBooking/chargeOverstayPenalty/
+    // reviewTopUp balance credits into a Cloud Function (triggered by,
+    // e.g., a booking's status changing to "completed") so only trusted
+    // server code ever writes wallet balances - this is flagged here as
+    // a known follow-up, not resolved in this pass.
+    // ---------------------------------------------------------------
+    match /wallets/{uid} {
+      allow read: if request.auth != null && (request.auth.uid == uid || isAdmin());
+      allow write: if request.auth != null;
+      match /ledger/{entryId} {
+        allow read: if request.auth != null && (request.auth.uid == uid || isAdmin());
+        allow write: if request.auth != null;
+      }
+    }
+
+    // ---------------------------------------------------------------
+    // Top-up requests - THIS WAS MISSING ENTIRELY, meaning every
+    // top-up submission has been silently rejected since the catch-all
+    // rule was removed. Driver can create/read their own; admin can
+    // read/update any (to approve/reject).
+    // ---------------------------------------------------------------
+    match /topUpRequests/{id} {
+      allow read: if request.auth != null && (resource.data.driverId == request.auth.uid || isAdmin());
+      allow create: if request.auth != null && request.resource.data.driverId == request.auth.uid;
+      allow update: if request.auth != null && (resource.data.driverId == request.auth.uid || isAdmin());
+    }
+
+    // ---------------------------------------------------------------
+    // Notifications (new, 31/8 update) - a user can only read/update
+    // (mark read) their OWN notifications. Creating one for someone
+    // ELSE is required (e.g. a driver's device creates a notification
+    // for the host when booking) so create just requires sign-in.
+    // ---------------------------------------------------------------
+    match /notifications/{id} {
+      allow read: if request.auth != null && resource.data.recipientId == request.auth.uid;
+      allow create: if request.auth != null;
+      allow update: if request.auth != null && resource.data.recipientId == request.auth.uid;
+    }
+
+    // ---------------------------------------------------------------
+    // Ratings - public read (used to compute a driver's/host's average
+    // rating for display), only the rater can create their own rating.
+    // ---------------------------------------------------------------
+    match /ratings/{id} {
+      allow read: if true;
+      allow create: if request.auth != null && request.resource.data.raterId == request.auth.uid;
+    }
+
+    // ---------------------------------------------------------------
+    // Partner program - being a partner is admin-vetted (not
+    // self-service), so only the admin can create/edit this document.
+    // ---------------------------------------------------------------
+    match /installPartners/{uid} {
+      allow read: if request.auth != null;
+      allow write: if isAdmin();
+    }
+
+    // ---------------------------------------------------------------
+    // Service requests - readable by any signed-in user (partners need
+    // to see the shared OPEN pool, not just their own), driver creates
+    // their own, any partner can update (accept/complete) or the
+    // driver can cancel their own.
+    // ---------------------------------------------------------------
+    match /installationRequests/{id} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null && request.resource.data.driverId == request.auth.uid;
+      allow update: if request.auth != null;
+    }
+
+    // ---------------------------------------------------------------
+    // Equipment marketplace - public read catalog, admin-managed
+    // listings, driver manages their own requests.
+    // ---------------------------------------------------------------
+    match /equipmentListings/{id} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    match /equipmentRequests/{id} {
+      allow read: if request.auth != null && resource.data.driverId == request.auth.uid;
+      allow create: if request.auth != null && request.resource.data.driverId == request.auth.uid;
+      allow update: if request.auth != null && resource.data.driverId == request.auth.uid;
+    }
+
+    // ---------------------------------------------------------------
+    // "Can't find your area?" free-text requests - write-only from the
+    // app (any signed-in user), reviewed by the admin in the console.
+    // ---------------------------------------------------------------
+    match /locationRequests/{id} {
+      allow create: if request.auth != null;
+      allow read: if isAdmin();
+    }
+
+    // NOTE: every collection currently used by the app now has an
+    // explicit rule above. If you add a brand-new collection later, add
+    // a matching `match` block for it here too - otherwise Firestore
+    // denies access to it by default (the safe behavior, but easy to
+    // forget - as happened with topUpRequests/notifications/ratings/
+    // installationRequests/equipmentListings/equipmentRequests/
+    // locationRequests/wallets after the catch-all rule was removed).
+  }
+}

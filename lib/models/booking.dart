@@ -1,3 +1,4 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'enums.dart';
 import '../services/pricing_service.dart';
 
@@ -89,6 +90,8 @@ class Booking {
     this.sessionEndedAt,
     this.actualCost,
     this.actualDuration,
+    this.overstayMinutes,
+    this.overstayPenalty,
   });
 
   Duration get reservedDuration => requestedEnd.difference(requestedStart);
@@ -162,7 +165,6 @@ class Booking {
     );
     final cappedCost = rawCost > heldAmount ? heldAmount : (rawCost < 0 ? 0.0 : rawCost);
     actualCost = cappedCost;
-
     // Overstay penalty: if the session is stopped more than the grace
     // period after the originally booked end time, charge a flat
     // per-minute penalty. This is separate from actualCost/heldAmount
@@ -176,8 +178,94 @@ class Booking {
       overstayMinutes = 0;
       overstayPenalty = 0;
     }
-
     status = BookingStatus.completed;
     return heldAmount - cappedCost;
+  }
+
+  /// Firestore document shape for the `bookings` collection. This is
+  /// what actually fixes bookings only ever "existing" on the device
+  /// that created them - previously BookingService kept bookings ONLY in
+  /// an in-memory list, so a host on a different device/phone than the
+  /// driver could never see a booking request at all, no matter how many
+  /// times they opened Manage Charger. See services/booking_service.dart
+  /// for the real-time listeners that now read this collection.
+  Map<String, dynamic> toFirestore() {
+    return {
+      'driverId': driverId,
+      'hostId': hostId,
+      'chargerId': chargerId,
+      'chargerName': chargerName,
+      'carBrand': carBrand,
+      'carModel': carModel,
+      'carPlateNumber': carPlateNumber,
+      'carConnector': carConnector,
+      'carChargingStandard': carChargingStandard,
+      'carMaxAmpere': carMaxAmpere,
+      'requestedStart': Timestamp.fromDate(requestedStart),
+      'requestedEnd': Timestamp.fromDate(requestedEnd),
+      'pricingModel': pricingModel.name,
+      'price': price,
+      'powerKw': powerKw,
+      'heldAmount': heldAmount,
+      'chargerMapLink': chargerMapLink,
+      'chargerLatitude': chargerLatitude,
+      'chargerLongitude': chargerLongitude,
+      'status': status.name,
+      'walletHeld': walletHeld,
+      'hostApproved': hostApproved,
+      'qrCodePayload': qrCodePayload,
+      'qrScannedAt': qrScannedAt == null ? null : Timestamp.fromDate(qrScannedAt!),
+      'sessionStartedAt': sessionStartedAt == null ? null : Timestamp.fromDate(sessionStartedAt!),
+      'sessionEndedAt': sessionEndedAt == null ? null : Timestamp.fromDate(sessionEndedAt!),
+      'actualCost': actualCost,
+      'actualDurationSeconds': actualDuration?.inSeconds,
+      'overstayMinutes': overstayMinutes,
+      'overstayPenalty': overstayPenalty,
+      'updatedAt': FieldValue.serverTimestamp(),
+    };
+  }
+
+  factory Booking.fromFirestore(String id, Map<String, dynamic> data) {
+    DateTime? tsOrNull(dynamic v) => v is Timestamp ? v.toDate() : null;
+    final actualDurationSeconds = data['actualDurationSeconds'] as num?;
+    return Booking(
+      id: id,
+      driverId: data['driverId'] as String? ?? '',
+      hostId: data['hostId'] as String? ?? '',
+      chargerId: data['chargerId'] as String? ?? '',
+      chargerName: data['chargerName'] as String? ?? '',
+      carBrand: data['carBrand'] as String? ?? '',
+      carModel: data['carModel'] as String? ?? '',
+      carPlateNumber: data['carPlateNumber'] as String? ?? '',
+      carConnector: data['carConnector'] as String? ?? '',
+      carChargingStandard: data['carChargingStandard'] as String? ?? '',
+      carMaxAmpere: (data['carMaxAmpere'] as num?)?.toDouble() ?? 0,
+      requestedStart: tsOrNull(data['requestedStart']) ?? DateTime.now(),
+      requestedEnd: tsOrNull(data['requestedEnd']) ?? DateTime.now(),
+      pricingModel: PricingModel.values.firstWhere(
+        (m) => m.name == data['pricingModel'],
+        orElse: () => PricingModel.perMinute,
+      ),
+      price: (data['price'] as num?)?.toDouble() ?? 0,
+      powerKw: (data['powerKw'] as num?)?.toDouble() ?? 0,
+      heldAmount: (data['heldAmount'] as num?)?.toDouble() ?? 0,
+      chargerMapLink: data['chargerMapLink'] as String?,
+      chargerLatitude: (data['chargerLatitude'] as num?)?.toDouble() ?? 0,
+      chargerLongitude: (data['chargerLongitude'] as num?)?.toDouble() ?? 0,
+      status: BookingStatus.values.firstWhere(
+        (s) => s.name == data['status'],
+        orElse: () => BookingStatus.pendingWalletHold,
+      ),
+      walletHeld: data['walletHeld'] as bool? ?? false,
+      hostApproved: data['hostApproved'] as bool? ?? false,
+      qrCodePayload: data['qrCodePayload'] as String?,
+      qrScannedAt: tsOrNull(data['qrScannedAt']),
+      sessionStartedAt: tsOrNull(data['sessionStartedAt']),
+      sessionEndedAt: tsOrNull(data['sessionEndedAt']),
+      actualCost: (data['actualCost'] as num?)?.toDouble(),
+      actualDuration: actualDurationSeconds == null ? null : Duration(seconds: actualDurationSeconds.toInt()),
+      overstayMinutes: (data['overstayMinutes'] as num?)?.toInt(),
+      overstayPenalty: (data['overstayPenalty'] as num?)?.toDouble(),
+    );
   }
 }

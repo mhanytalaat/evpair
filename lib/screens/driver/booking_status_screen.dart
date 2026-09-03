@@ -20,14 +20,12 @@ class _StatusMeta {
 class BookingStatusScreen extends StatefulWidget {
   final String bookingId;
   const BookingStatusScreen({super.key, required this.bookingId});
-
   @override
   State<BookingStatusScreen> createState() => _BookingStatusScreenState();
 }
 
 class _BookingStatusScreenState extends State<BookingStatusScreen> {
   Timer? _timer;
-
   static const Map<BookingStatus, _StatusMeta> _statusMeta = {
     BookingStatus.pendingWalletHold: _StatusMeta('Waiting for wallet payment...', PsEvColors.amber, Icons.hourglass_top),
     BookingStatus.pendingHostApproval: _StatusMeta('Payment held. Waiting for host approval...', PsEvColors.amber, Icons.hourglass_top),
@@ -58,9 +56,11 @@ class _BookingStatusScreenState extends State<BookingStatusScreen> {
     return h > 0 ? '${two(h)}:${two(m)}:${two(s)}' : '${two(m)}:${two(s)}';
   }
 
-  void _startSession(BuildContext context, BookingService bookingService) {
-    final ok = bookingService.startSession(widget.bookingId);
-    if (!ok) {
+  /// Now awaits BookingService.startSession, which is Future<bool> since
+  /// it persists the state change to Firestore (see booking_service.dart).
+  Future<void> _startSession(BuildContext context, BookingService bookingService) async {
+    final ok = await bookingService.startSession(widget.bookingId);
+    if (!ok && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('You can start this session closer to your reserved time.'),
@@ -70,17 +70,12 @@ class _BookingStatusScreenState extends State<BookingStatusScreen> {
     }
   }
 
-  /// Warns the driver BEFORE they stop the session if they're already
-  /// past their booked end time + grace period, so the overstay penalty
-  /// (charged in BookingService.completeSession) is never a surprise.
   Future<bool> _confirmStopIfOverstaying(BuildContext context, dynamic booking) async {
     final lateBy = DateTime.now().difference(booking.requestedEnd).inMinutes;
     const grace = 15; // kept in sync with kOverstayGraceMinutes in models/booking.dart
     if (lateBy <= grace) return true;
-
     final extraMinutes = lateBy - grace;
     final estimatedPenalty = extraMinutes * 2.0; // kept in sync with kOverstayPenaltyPerMinute
-
     final proceed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -125,7 +120,6 @@ class _BookingStatusScreenState extends State<BookingStatusScreen> {
     final hasOverstayPenalty = booking.status == BookingStatus.completed && (booking.overstayPenalty ?? 0) > 0;
     final showRatePrompt = booking.status == BookingStatus.completed &&
         !ratingService.hasRatedBooking(booking.id, RaterRole.driver);
-
     return Scaffold(
       appBar: const PsEvAppBar(title: 'Booking Status'),
       body: Center(
@@ -200,7 +194,7 @@ class _BookingStatusScreenState extends State<BookingStatusScreen> {
                         onTap: () async {
                           final proceed = await _confirmStopIfOverstaying(context, booking);
                           if (!proceed) return;
-                          bookingService.completeSession(booking.id);
+                          await bookingService.completeSession(booking.id);
                         },
                       ),
                     ),
@@ -227,14 +221,6 @@ class _BookingStatusScreenState extends State<BookingStatusScreen> {
                         ),
                       ),
                     ),
-
-                  // -----------------------------------------------------
-                  // Rate Your Host - only shown once the session is
-                  // completed and only until the driver actually submits
-                  // (or explicitly skips) a rating for this booking. See
-                  // RatingService.hasRatedBooking for the persistence
-                  // logic.
-                  // -----------------------------------------------------
                   if (showRatePrompt)
                     Padding(
                       padding: const EdgeInsets.only(top: 16),

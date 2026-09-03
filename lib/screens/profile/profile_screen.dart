@@ -3,8 +3,11 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 import '../../services/auth_service.dart';
+import '../../services/booking_service.dart';
+import '../../services/notification_service.dart';
 import '../../services/partner_service.dart';
 import '../../services/profile_photo_service.dart';
+import '../../services/push_notification_service.dart';
 import '../../state/app_state.dart';
 import '../../theme/ps_ev_theme.dart';
 import '../auth/register_screen.dart';
@@ -17,18 +20,10 @@ import '../legal/legal_document_screen.dart';
 import '../partner/home_installation_screen.dart';
 import '../partner/partner_jobs_screen.dart';
 import '../shared/contact_support_screen.dart';
+import '../shared/notifications_screen.dart';
 import 'account_settings_screen.dart';
 
-/// Profile / account hub. Cars, Stations, Wallet, Booking History, and
-/// Home Installation & Equipment are surfaced here as "Manage" rows
-/// since they're occasional-use actions, not everyday destinations that
-/// deserve footer space. Account Settings, Legal, and Contact Support
-/// are listed the same way for a single consistent list-row pattern.
-///
-/// The avatar at the top is now tappable - lets the user set/change/
-/// remove their own profile photo (see ProfilePhotoService), stored as
-/// base64 in Firestore so it works identically on web, iOS, and Android
-/// with no Storage/CORS setup required.
+/// Profile / account hub.
 class ProfileScreen extends StatelessWidget {
   const ProfileScreen({super.key});
 
@@ -45,7 +40,18 @@ class ProfileScreen extends StatelessWidget {
       ),
     );
     if (confirmed != true) return;
-
+    // Item #5 of the 31/8 update (notification hygiene): stop this
+    // device's booking/notification listeners and remove its push token
+    // BEFORE signing out - otherwise a shared/borrowed device could keep
+    // receiving push notifications meant for the account that just
+    // signed out, and the listeners would keep querying with a uid that
+    // no longer matches this session.
+    final uid = context.read<AppState>().currentUserId;
+    if (uid != null) {
+      await PushNotificationService.removeTokenForCurrentDevice(uid);
+    }
+    context.read<BookingService>().stopListening();
+    context.read<NotificationService>().stopListening();
     await context.read<AuthService>().signOut();
     if (!context.mounted) return;
     await context.read<AppState>().clearCurrentUserAndData();
@@ -83,14 +89,11 @@ class ProfileScreen extends StatelessWidget {
         ),
       ),
     );
-
     if (choice == null) return;
-
     if (choice == 'remove') {
       await ProfilePhotoService.removePhoto(uid);
       return;
     }
-
     final source = choice == 'camera' ? ImageSource.camera : ImageSource.gallery;
     try {
       await ProfilePhotoService.pickAndSave(uid, source: source);
@@ -107,8 +110,8 @@ class ProfileScreen extends StatelessWidget {
     final auth = context.watch<AuthService>();
     final app = context.watch<AppState>();
     final partnerService = context.watch<PartnerService>();
+    final notificationService = context.watch<NotificationService>();
     final uid = app.currentUserId;
-
     return Scaffold(
       appBar: AppBar(
         title: const Text('My Profile'),
@@ -183,9 +186,7 @@ class ProfileScreen extends StatelessWidget {
               ),
             ),
           ),
-
           const SizedBox(height: 12),
-
           const Padding(
             padding: EdgeInsets.only(left: 4, bottom: 8),
             child: Text('Manage', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: PsEvColors.mutedText)),
@@ -193,6 +194,14 @@ class ProfileScreen extends StatelessWidget {
           Card(
             child: Column(
               children: [
+                _ProfileRow(
+                  icon: Icons.notifications_outlined,
+                  iconColor: PsEvColors.red,
+                  title: 'Notifications',
+                  subtitle: notificationService.unreadCount > 0 ? '${notificationService.unreadCount} unread' : 'You\'re all caught up',
+                  onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const NotificationsScreen())),
+                ),
+                const Divider(height: 1),
                 _ProfileRow(
                   icon: Icons.electric_car,
                   iconColor: PsEvColors.emerald,
@@ -240,7 +249,6 @@ class ProfileScreen extends StatelessWidget {
               ],
             ),
           ),
-
           if (partnerService.isPartner) ...[
             const SizedBox(height: 12),
             const Padding(
@@ -258,9 +266,7 @@ class ProfileScreen extends StatelessWidget {
               ),
             ),
           ],
-
           const SizedBox(height: 12),
-
           const Padding(
             padding: EdgeInsets.only(left: 4, bottom: 8),
             child: Text('Settings', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: PsEvColors.mutedText)),
@@ -313,7 +319,6 @@ class ProfileScreen extends StatelessWidget {
               ],
             ),
           ),
-
           if (auth.isRegistered) ...[
             const SizedBox(height: 16),
             PsEvFilledButton(
@@ -347,7 +352,6 @@ class _ProfileRow extends StatelessWidget {
   final String subtitle;
   final VoidCallback onTap;
   final bool isLast;
-
   const _ProfileRow({
     required this.icon,
     required this.iconColor,
