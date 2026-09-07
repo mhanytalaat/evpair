@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
@@ -6,41 +7,88 @@ import '../models/wallet_transaction.dart';
 import '../models/app_notification.dart';
 import 'notification_service.dart';
 
+/// FIX (3/9 update - "top-up shows 0 after logging back in, and doesn't
+/// appear on the admin approval view"):
+///
+/// Root cause found in the actual code: `hydrateFromFirestore(userId)`
+/// only ever fetched top-up requests where `driverId == userId` - i.e.
+/// only the SIGNED-IN user's own requests. A separate method,
+/// `hydrateAllTopUpRequests()`, existed to load the ENTIRE
+/// `topUpRequests` collection for admin review, but it was never called
+/// anywhere in the app (main.dart, AdminHomeScreen, etc. all never
+/// invoked it). Since AdminHomeScreen just reads `wallet.pendingTopUps`
+/// from this same shared WalletService instance, the admin's own
+/// `hydrateFromFirestore(adminUid)` call only ever loaded requests where
+/// `driverId == adminUid` - meaning a DIFFERENT driver's top-up request
+/// was never loaded into memory at all, so it could never appear on the
+/// admin's approval screen, and could therefore never be approved -
+/// which is exactly why the balance stayed at 0 forever (the Firestore
+/// data itself was correct and unapproved, it just could never BE
+/// approved).
+///
+/// FIX: replaced the one-time per-user fetch with LIVE Firestore
+/// listeners (same real-time pattern already used for
+/// BookingService/NotificationService/AppState.chargers):
+///   - `listenToMyTopUpRequests(uid)` - every signed-in user gets a live
+///     listener on their OWN top-ups (call in main.dart, sign_in_screen,
+///     register_screen). This also means a driver's top-up status now
+///     updates instantly if the admin approves/rejects while they're
+///     still in the app - previously they'd have to fully sign out and
+///     back in to see any change at all.
+///   - `listenToAllTopUpRequestsForAdmin()` - ADDITIONALLY called only
+///     for the admin account - this is what actually fixes "not
+///     appearing on the admin view": the admin's WalletService instance
+///     now has a live view of EVERY driver's pending top-up, not just
+///     their own.
 class WalletService extends ChangeNotifier {
   WalletService({FirebaseFirestore? firestore, this.notificationService}) : _db = firestore ?? FirebaseFirestore.instance;
   final FirebaseFirestore _db;
-  /// Optional so existing tests/usages that don't care about
-  /// notifications still work - but main.dart always provides a real
-  /// one, which is what actually sends the "mandatory" top-up
-  /// approved/rejected notification to the driver (see reviewTopUp).
   final NotificationService? notificationService;
   final _uuid = const Uuid();
 
   final Map<String, double> _balances = {};
   final Map<String, double> _heldForBooking = {};
-  final List<TopUpRequest> _topUpRequests = [];
+  // Keyed by document id so live listener updates (create/update/delete)
+  // merge cleanly with no duplicates, same pattern as
+  // BookingService._bookingsById.
+  final Map<String, TopUpRequest> _topUpRequestsById = {};
   final List<WalletLedgerEntry> _ledger = [];
+
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _myTopUpsSub;
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _allTopUpsSubForAdmin;
+  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _balanceSub;
 
   double balanceOf(String userId) => _balances[userId] ?? 0;
 
   List<TopUpRequest> get pendingTopUps =>
-      _topUpRequests.where((t) => t.status == TopUpStatus.pendingProofReview).toList();
+      _topUpRequestsById.values.where((t) => t.status == TopUpStatus.pendingProofReview).toList();
 
   List<WalletLedgerEntry> ledgerFor(String userId) =>
       _ledger.where((e) => e.userId == userId).toList()
         ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
 
   // ---------------------------------------------------------------------
-  // Firestore hydration
+  // Firestore hydration / live listeners
   // ---------------------------------------------------------------------
 
+  /// Call after sign-in/registration, and once at startup if already
+  /// signed in (see main.dart). Sets up a LIVE balance listener (so an
+  /// admin approval reflects instantly, no restart needed) plus a
+  /// one-time ledger history fetch, and a live listener on this user's
+  /// OWN top-up requests (see class doc above).
   Future<void> hydrateFromFirestore(String userId) async {
     try {
-      final walletDoc = await _db.collection('wallets').doc(userId).get();
-      final data = walletDoc.data();
-      if (data != null && data['balance'] != null) {
-        _balances[userId] = (data['balance'] as num).toDouble();
-      }
+      _balanceSub?.cancel();
+      _balanceSub = _db.collection('wallets').doc(userId).snapshots().listen(
+        (doc) {
+          final data = doc.data();
+          if (data != null && data['balance'] != null) {
+            _balances[userId] = (data['balance'] as num).toDouble();
+            notifyListeners();
+          }
+        },
+        onError: (e) => debugPrint('WalletService: balance listener error: $e'),
+      );
       final ledgerSnapshot = await _db
           .collection('wallets')
           .doc(userId)
@@ -52,28 +100,65 @@ class WalletService extends ChangeNotifier {
       for (final doc in ledgerSnapshot.docs) {
         _ledger.add(_ledgerFromDoc(userId, doc.id, doc.data()));
       }
-      final topUpSnapshot =
-          await _db.collection('topUpRequests').where('driverId', isEqualTo: userId).get();
-      _topUpRequests.removeWhere((t) => t.driverId == userId);
-      for (final doc in topUpSnapshot.docs) {
-        _topUpRequests.add(_topUpFromDoc(doc.id, doc.data()));
-      }
+      listenToMyTopUpRequests(userId);
       notifyListeners();
     } catch (e) {
       debugPrint('WalletService.hydrateFromFirestore failed: $e');
     }
   }
 
-  Future<void> hydrateAllTopUpRequests() async {
-    try {
-      final snapshot = await _db.collection('topUpRequests').get();
-      _topUpRequests
-        ..clear()
-        ..addAll(snapshot.docs.map((d) => _topUpFromDoc(d.id, d.data())));
-      notifyListeners();
-    } catch (e) {
-      debugPrint('WalletService.hydrateAllTopUpRequests failed: $e');
+  /// Live listener for the SIGNED-IN user's own top-up requests. Kept as
+  /// its own method (rather than only inside hydrateFromFirestore) so it
+  /// can be re-attached independently if ever needed.
+  void listenToMyTopUpRequests(String userId) {
+    _myTopUpsSub?.cancel();
+    _myTopUpsSub = _db.collection('topUpRequests').where('driverId', isEqualTo: userId).snapshots().listen(
+      (snapshot) => _mergeTopUpSnapshot(snapshot),
+      onError: (e) => debugPrint('WalletService: my top-ups listener error: $e'),
+    );
+  }
+
+  /// THE FIX: live listener over the ENTIRE topUpRequests collection,
+  /// with no driverId filter - only ever call this for the admin
+  /// account (see AuthService.isAdmin / kAdminEmail). This is what makes
+  /// every driver's pending top-up actually visible to
+  /// AdminHomeScreen._buildTopUps, which reads `wallet.pendingTopUps`.
+  /// Firestore security rules already permit this (see
+  /// `match /topUpRequests/{id} { allow read: if ... || isAdmin(); }`) -
+  /// the bug was purely that the app never actually issued this query.
+  void listenToAllTopUpRequestsForAdmin() {
+    _allTopUpsSubForAdmin?.cancel();
+    _allTopUpsSubForAdmin = _db.collection('topUpRequests').snapshots().listen(
+      (snapshot) => _mergeTopUpSnapshot(snapshot),
+      onError: (e) => debugPrint('WalletService: admin all-top-ups listener error: $e'),
+    );
+  }
+
+  void _mergeTopUpSnapshot(QuerySnapshot<Map<String, dynamic>> snapshot) {
+    for (final change in snapshot.docChanges) {
+      if (change.type == DocumentChangeType.removed) {
+        _topUpRequestsById.remove(change.doc.id);
+      } else {
+        _topUpRequestsById[change.doc.id] = _topUpFromDoc(change.doc.id, change.doc.data()!);
+      }
     }
+    notifyListeners();
+  }
+
+  void stopListening() {
+    _myTopUpsSub?.cancel();
+    _allTopUpsSubForAdmin?.cancel();
+    _balanceSub?.cancel();
+    _topUpRequestsById.clear();
+    notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _myTopUpsSub?.cancel();
+    _allTopUpsSubForAdmin?.cancel();
+    _balanceSub?.cancel();
+    super.dispose();
   }
 
   // ---------------------------------------------------------------------
@@ -97,19 +182,18 @@ class WalletService extends ChangeNotifier {
       proofImagePath: proofImagePath,
       proofImageBase64: proofImageBase64,
     );
-    _topUpRequests.add(request);
+    _topUpRequestsById[request.id] = request;
     notifyListeners();
     _persistTopUp(request);
     return request;
   }
 
-  /// Approves/rejects a pending top-up. Now ALSO sends a mandatory
-  /// notification to the driver either way (approved -> credited amount,
-  /// rejected -> reason) - see NotificationService. Previously there was
-  /// no notification at all for this event; the driver would only find
-  /// out by manually reopening the Wallet screen.
+  /// Approves/rejects a pending top-up. Sends a mandatory notification
+  /// to the driver either way (approved -> credited amount, rejected ->
+  /// reason).
   void reviewTopUp(String requestId, {required bool approve, String? adminNote}) {
-    final request = _topUpRequests.firstWhere((t) => t.id == requestId);
+    final request = _topUpRequestsById[requestId];
+    if (request == null) return;
     request.status = approve ? TopUpStatus.approved : TopUpStatus.rejected;
     request.reviewedAt = DateTime.now();
     request.adminNote = adminNote;

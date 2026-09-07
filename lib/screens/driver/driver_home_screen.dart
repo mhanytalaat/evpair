@@ -16,6 +16,7 @@ import '../../services/notification_service.dart';
 import '../../services/map_launcher_service.dart';
 import '../../services/profile_photo_service.dart';
 import '../../theme/ps_ev_theme.dart';
+import '../../widgets/host_rating_badge.dart';
 import '../auth/register_screen.dart';
 import '../profile/profile_screen.dart';
 import '../shared/location_picker_field.dart';
@@ -27,6 +28,7 @@ import 'wallet_screen.dart';
 import 'booking_status_screen.dart';
 import 'booking_request_screen.dart';
 import 'my_bookings_screen.dart';
+import '../shared/station_reviews_screen.dart';
 
 enum _ChargerAccessState { standardMismatch, residentsOnlyLocked, full, available }
 
@@ -334,11 +336,17 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
     final bookingService = context.watch<BookingService>();
     final auth = context.watch<AuthService>();
     final notificationService = context.watch<NotificationService>();
+
     final allChargers = app.chargers;
     final walletBalance = wallet.balanceOf(app.currentUserId ?? '');
-    final activeBooking = app.lastDriverBookingId == null ? null : bookingService.findById(app.lastDriverBookingId!);
-    final hasActiveBooking = activeBooking != null &&
-        (activeBooking.status == BookingStatus.confirmed || activeBooking.status == BookingStatus.inProgress);
+    // FIX (7/9 update, items #4/#9/#15): derive the active booking from
+    // a LIVE Firestore-backed query instead of the ephemeral
+    // AppState.lastDriverBookingId (which is never persisted and resets
+    // to null on every app restart / re-sign-in).
+    final driverActiveBookings = bookingService.activeForDriver(app.currentUserId ?? '');
+    final activeBooking = driverActiveBookings.isEmpty ? null : driverActiveBookings.first;
+    final hasActiveBooking = activeBooking != null;
+
     final chargers = allChargers.where((c) {
       if (_selectedCity != null && c.city != _selectedCity) return false;
       if (_selectedArea != null && c.area != _selectedArea) return false;
@@ -721,7 +729,33 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  Text(selected.label, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: Text(selected.label, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                                      ),
+                                      HostRatingBadge(hostId: selected.hostId),
+                                      // FIX (7/9 update, item #12): opens
+                                      // the full list of written reviews
+                                      // for this station.
+                                      InkWell(
+                                        onTap: () => Navigator.push(
+                                          context,
+                                          MaterialPageRoute(
+                                            builder: (_) => StationReviewsScreen(
+                                              chargerId: selected.chargerId,
+                                              chargerLabel: selected.label,
+                                            ),
+                                          ),
+                                        ),
+                                        child: const Padding(
+                                          padding: EdgeInsets.only(left: 4, top: 6),
+                                          child: Icon(Icons.reviews_outlined, size: 18, color: PsEvColors.mutedText),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
                                   Text('${selected.city} • ${selected.area}', style: const TextStyle(color: PsEvColors.mutedText, fontSize: 12)),
                                   Wrap(
                                     children: [
@@ -827,15 +861,6 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
                             )
                           else
                             ...freeSlots.map((s) {
-                              // FIX (31/8 update, item #6): show exactly
-                              // which sub-ranges within THIS window are
-                              // already booked by another driver, instead
-                              // of only surfacing a generic "not
-                              // available" error after a driver tries and
-                              // fails to book that time. Pulled live from
-                              // BookingService so it updates instantly as
-                              // new requests come in (no need to reopen
-                              // this station to see fresh data).
                               final booked = bookingService.bookedRangesFor(selected.chargerId)
                                   .where((r) => !r.end.isBefore(s.start) && !r.start.isAfter(s.end))
                                   .toList();
@@ -925,9 +950,6 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
     );
   }
 
-  /// Notification bell with a red unread-count badge, matching the same
-  /// visual style as the filter/recenter buttons. Tapping navigates to
-  /// the full notification list (see NotificationsScreen).
   Widget _notificationBell(BuildContext context, NotificationService notificationService) {
     final count = notificationService.unreadCount;
     return Material(
@@ -1052,19 +1074,19 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
               ),
             ),
           ),
+
           _footerIconButton(
             icon: Icons.bolt,
             showBadge: hasActiveBooking,
             onTap: () async {
-              if (hasActiveBooking) {
-                Navigator.push(context, MaterialPageRoute(builder: (_) => BookingStatusScreen(bookingId: app.lastDriverBookingId!)));
-                return;
-              }
               final ok = await ensureRegistered(context);
               if (!ok || !context.mounted) return;
+              // FIX (7/9 update, items #4/#9): always open My Bookings,
+              // which now shows Upcoming/Active AND Past sections.
               Navigator.push(context, MaterialPageRoute(builder: (_) => const MyBookingsScreen()));
             },
           ),
+
           _footerIconButton(
             icon: Icons.account_balance_wallet_outlined,
             onTap: () async {
@@ -1075,10 +1097,24 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
           ),
           InkWell(
             borderRadius: BorderRadius.circular(999),
+            // FIX (3/9 update, item #6 - "signing in lands on Profile
+            // instead of Home"): previously this ALWAYS navigated to
+            // ProfileScreen right after ensureRegistered() succeeded -
+            // including for a brand-new guest who had just tapped this
+            // icon purely to sign in/register. Now: only auto-navigate
+            // to Profile if the user was ALREADY signed in before this
+            // tap (i.e. they're intentionally opening their profile). A
+            // fresh guest who just completed sign-in/registration simply
+            // stays on the Home map afterward, exactly like completing a
+            // sign-in from any OTHER quick-add action (Add a Car, Add a
+            // Station, etc.) already did.
             onTap: () async {
+              final wasAlreadyRegistered = auth.isRegistered;
               final ok = await ensureRegistered(context);
               if (!ok || !context.mounted) return;
-              Navigator.push(context, MaterialPageRoute(builder: (_) => const ProfileScreen()));
+              if (wasAlreadyRegistered) {
+                Navigator.push(context, MaterialPageRoute(builder: (_) => const ProfileScreen()));
+              }
             },
             child: Padding(
               padding: const EdgeInsets.all(6),
@@ -1090,10 +1126,6 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
     );
   }
 
-  /// Now shows a small unread-count badge (same red-dot style already
-  /// used for `hasActiveBooking` on the Sessions icon) so notifications
-  /// are visible right from the home screen's footer, without needing
-  /// to open the bell menu first.
   Widget _footerProfileAvatar(AuthService auth, String? uid, int unreadCount) {
     if (uid == null) {
       return CircleAvatar(

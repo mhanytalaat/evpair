@@ -1,0 +1,56 @@
+PATCH NOTE — apply these two small changes to your existing
+lib/screens/profile/profile_screen.dart. This is intentionally NOT a
+full file this time (per your earlier feedback that a full-file
+"patch" caused confusion) — these are two precise, minimal additions.
+
+--------------------------------------------------------------------
+CHANGE 1 — add this import near your other screen imports:
+--------------------------------------------------------------------
+import '../shared/push_diagnostics_screen.dart';
+
+--------------------------------------------------------------------
+CHANGE 2 — add ONE new _ProfileRow entry inside the "Settings" Card,
+right after the existing "Account Settings" _ProfileRow and its
+Divider. Find this section:
+
+              Card(
+                child: Column(
+                  children: [
+                    _ProfileRow(
+                      icon: Icons.person_outline,
+                      iconColor: PsEvColors.slateText,
+                      title: 'Account Settings',
+                      subtitle: 'Name, email, and phone number',
+                      onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AccountSettingsScreen())),
+                    ),
+                    const Divider(height: 1),
+                    _ProfileRow(
+                      icon: Icons.support_agent_outlined,
+                      ...
+
+Insert a NEW _ProfileRow + Divider directly between the
+"Account Settings" row's Divider and the "Contact Support" row, like
+this:
+
+              Card(
+                child: Column(
+                  children: [
+                    _ProfileRow(
+                      icon: Icons.person_outline,
+                      iconColor: PsEvColors.slateText,
+                      title: 'Account Settings',
+                      subtitle: 'Name, email, and phone number',
+                      onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AccountSettingsScreen())),
+                    ),
+                    const Divider(height: 1),
+                    _ProfileRow(                                          // <-- NEW
+                      icon: Icons.bug_report_outlined,                    // <-- NEW
+                      iconColor: PsEvColors.blue,                         // <-- NEW
+                      title: 'Push Notification Diagnostics',             // <-- NEW
+                      subtitle: 'Check why push notifications may not be working', // <-- NEW
+                      onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PushDiagnosticsScreen())), // <-- NEW
+                    ),                                                     // <-- NEW
+                    const Divider(height: 1),                              // <-- NEW
+                    _ProfileRow(
+                      icon: Icons.support_agent_outlined,
+                      ...

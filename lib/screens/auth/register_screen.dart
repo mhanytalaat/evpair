@@ -6,6 +6,7 @@ import '../../services/auth_service.dart';
 import '../../services/booking_service.dart';
 import '../../services/notification_service.dart';
 import '../../services/push_notification_service.dart';
+import '../../services/wallet_service.dart';
 import '../../utils/phone_number_validator.dart';
 import '../../theme/ps_ev_theme.dart';
 import '../../theme/ps_ev_app_bar.dart';
@@ -80,20 +81,26 @@ class _RegisterScreenState extends State<RegisterScreen> {
             password: _passwordCtrl.text,
           );
       if (!mounted) return;
-      final uid = context.read<AuthService>().uid;
+      final auth = context.read<AuthService>();
+      final uid = auth.uid;
       if (uid != null) {
         await context.read<AppState>().setCurrentUserAndHydrate(uid);
         if (!mounted) return;
-        // Item #5/#6 of the 31/8 update: bookings and notifications must
-        // start syncing IMMEDIATELY after registration, not only on the
-        // next cold app start (which is when main.dart would otherwise
-        // be the only place this runs). Without this, a driver who
-        // registers and immediately books wouldn't see live booking
-        // status updates or receive notifications until they fully
-        // restart the app.
         context.read<BookingService>().hydrate(uid);
         context.read<NotificationService>().listenFor(uid);
         await PushNotificationService.initAndRegister(uid);
+        // FIX (3/9 update): WalletService.hydrateFromFirestore was
+        // previously NEVER called from either RegisterScreen or
+        // SignInScreen - only from main.dart, and only for a user who
+        // was ALREADY signed in at a cold app start. This is very
+        // likely the real cause of "top-up shows 0 after logging off
+        // and back on": logging back IN (rather than a full app
+        // restart) never loaded the wallet balance/top-ups at all.
+        final wallet = context.read<WalletService>();
+        await wallet.hydrateFromFirestore(uid);
+        if (auth.isAdmin) {
+          wallet.listenToAllTopUpRequestsForAdmin();
+        }
       }
       if (!mounted) return;
       Navigator.pop(context, true);

@@ -1,11 +1,27 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import '../../services/booking_service.dart';
 import '../../state/app_state.dart';
+import '../../models/booking.dart';
 import '../../theme/ps_ev_theme.dart';
 import '../../theme/ps_ev_app_bar.dart';
+import '../../widgets/driver_info_line.dart';
 
+/// Host-facing "Active Sessions" screen.
+///
+/// FIX (7/9 update):
+///   - item #3: every booking card now resolves and shows the driver's
+///     actual NAME (via [DriverInfoLine]) instead of the raw
+///     `booking.driverId` Firestore characters.
+///   - item #4: now has a third "Past Sessions" section (completed
+///     bookings for this host's chargers), so a host can see stations
+///     they've previously rented out from the same screen instead of
+///     that history being unreachable anywhere.
+///   - item #14: sections are now clearly labelled Upcoming / Charging
+///     Now / Past, so "Booked - Awaiting Start" bookings are never
+///     confused with an actually-active (currently charging) session.
 class HostScanScreen extends StatefulWidget {
   const HostScanScreen({super.key});
 
@@ -42,6 +58,8 @@ class _HostScanScreenState extends State<HostScanScreen> {
     final currentUserId = context.watch<AppState>().currentUserId ?? '';
     final confirmed = bookingService.confirmedForHost(currentUserId);
     final inProgress = bookingService.inProgressForHost(currentUserId);
+    final past = bookingService.completedForHost(currentUserId);
+    final dateFmt = DateFormat('EEE, MMM d - h:mm a');
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
@@ -55,7 +73,7 @@ class _HostScanScreenState extends State<HostScanScreen> {
           _announcedInProgressIds.add(b.id);
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('${b.driverId} started charging at ${b.chargerName}'),
+              content: Text('A driver started charging at ${b.chargerName}'),
               backgroundColor: PsEvColors.emerald,
             ),
           );
@@ -63,10 +81,10 @@ class _HostScanScreenState extends State<HostScanScreen> {
       }
     });
 
-    if (confirmed.isEmpty && inProgress.isEmpty) {
+    if (confirmed.isEmpty && inProgress.isEmpty && past.isEmpty) {
       return const Scaffold(
         appBar: PsEvAppBar(title: 'Active Sessions'),
-        body: Center(child: Text('No confirmed or active sessions right now.', style: TextStyle(color: PsEvColors.mutedText))),
+        body: Center(child: Text('No sessions yet for your stations.', style: TextStyle(color: PsEvColors.mutedText))),
       );
     }
 
@@ -76,7 +94,7 @@ class _HostScanScreenState extends State<HostScanScreen> {
         padding: const EdgeInsets.all(16),
         children: [
           if (confirmed.isNotEmpty) ...[
-            const Text('Booked · Awaiting Start', style: TextStyle(fontWeight: FontWeight.bold)),
+            const Text('Upcoming - Booked, Awaiting Start', style: TextStyle(fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
             ...confirmed.map((b) => Card(
                   child: Padding(
@@ -89,7 +107,11 @@ class _HostScanScreenState extends State<HostScanScreen> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(b.chargerName, style: const TextStyle(fontWeight: FontWeight.bold)),
-                              Text('Driver: ${b.driverId}', style: const TextStyle(color: PsEvColors.mutedText, fontSize: 12)),
+                              DriverInfoLine(uid: b.driverId),
+                              Text(
+                                '${dateFmt.format(b.requestedStart)} - ${DateFormat('h:mm a').format(b.requestedEnd)}',
+                                style: const TextStyle(color: PsEvColors.mutedText, fontSize: 11),
+                              ),
                             ],
                           ),
                         ),
@@ -117,7 +139,7 @@ class _HostScanScreenState extends State<HostScanScreen> {
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   Text(b.chargerName, style: const TextStyle(fontWeight: FontWeight.bold)),
-                                  Text('Driver: ${b.driverId}', style: const TextStyle(color: PsEvColors.mutedText, fontSize: 12)),
+                                  DriverInfoLine(uid: b.driverId),
                                 ],
                               ),
                             ),
@@ -141,8 +163,47 @@ class _HostScanScreenState extends State<HostScanScreen> {
                     ),
                   ),
                 )),
+            const SizedBox(height: 16),
+          ],
+          if (past.isNotEmpty) ...[
+            const Text('Past Sessions', style: TextStyle(fontWeight: FontWeight.bold)),
+            const Padding(
+              padding: EdgeInsets.only(top: 2, bottom: 8),
+              child: Text('Stations you have previously rented out.', style: TextStyle(fontSize: 11, color: PsEvColors.mutedText)),
+            ),
+            ...past.map((b) => _pastSessionCard(b, dateFmt)),
           ],
         ],
+      ),
+    );
+  }
+
+  Widget _pastSessionCard(Booking b, DateFormat dateFmt) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(b.chargerName, style: const TextStyle(fontWeight: FontWeight.bold)),
+                  DriverInfoLine(uid: b.driverId),
+                  Text(
+                    dateFmt.format(b.sessionEndedAt ?? b.requestedEnd),
+                    style: const TextStyle(color: PsEvColors.mutedText, fontSize: 11),
+                  ),
+                ],
+              ),
+            ),
+            Text(
+              'Charged: ${b.actualCost?.toStringAsFixed(0) ?? '-'} EGP',
+              style: const TextStyle(fontSize: 12, color: PsEvColors.emerald, fontWeight: FontWeight.w700),
+            ),
+          ],
+        ),
       ),
     );
   }

@@ -10,6 +10,14 @@ import '../../theme/ps_ev_theme.dart';
 import '../../theme/ps_ev_app_bar.dart';
 import 'booking_status_screen.dart';
 
+/// Driver-facing booking history.
+///
+/// FIX (7/9 update, items #4/#9/#14): this screen previously only ever
+/// showed [BookingService.ongoingForDriver] (pending/confirmed/in-
+/// progress bookings) - a driver's PAST (completed, or
+/// cancelled/declined/expired) sessions had no home anywhere in the app
+/// at all. Now shows two clearly separated sections: "Upcoming &
+/// Active" and "Past Sessions".
 class MyBookingsScreen extends StatefulWidget {
   const MyBookingsScreen({super.key});
 
@@ -47,8 +55,15 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
         return PsEvStatusPill.bookedAwaitingScan();
       case BookingStatus.inProgress:
         return PsEvStatusPill.charging();
-      default:
-        return const PsEvStatusPill(label: 'Other', background: PsEvColors.slate100, textColor: PsEvColors.slateText);
+      case BookingStatus.completed:
+        return const PsEvStatusPill(label: 'Completed', background: PsEvColors.emeraldChip, textColor: PsEvColors.emeraldChipText);
+      case BookingStatus.declinedByHost:
+        return const PsEvStatusPill(label: 'Declined', background: PsEvColors.redChip, textColor: PsEvColors.redChipText);
+      case BookingStatus.cancelledByDriver:
+      case BookingStatus.cancelledByAdmin:
+        return const PsEvStatusPill(label: 'Cancelled', background: PsEvColors.slate100, textColor: PsEvColors.slateText);
+      case BookingStatus.expired:
+        return const PsEvStatusPill(label: 'Expired', background: PsEvColors.slate100, textColor: PsEvColors.slateText);
     }
   }
 
@@ -56,17 +71,35 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
   Widget build(BuildContext context) {
     final bookingService = context.watch<BookingService>();
     final currentUserId = context.watch<AppState>().currentUserId ?? '';
-    final bookings = bookingService.ongoingForDriver(currentUserId).reversed.toList();
-    final dateFmt = DateFormat('EEE, MMM d • h:mm a');
+    final upcoming = bookingService.ongoingForDriver(currentUserId).reversed.toList();
+    final past = bookingService.pastForDriver(currentUserId);
+    final dateFmt = DateFormat('EEE, MMM d - h:mm a');
+
+    if (upcoming.isEmpty && past.isEmpty) {
+      return const Scaffold(
+        appBar: PsEvAppBar(title: 'My Bookings'),
+        body: Center(child: Text('No bookings yet.', style: TextStyle(color: PsEvColors.mutedText))),
+      );
+    }
 
     return Scaffold(
       appBar: const PsEvAppBar(title: 'My Bookings'),
-      body: bookings.isEmpty
-          ? const Center(child: Text('No booked or ongoing sessions right now.', style: TextStyle(color: PsEvColors.mutedText)))
-          : ListView(
-              padding: const EdgeInsets.all(16),
-              children: bookings.map((b) => _bookingCard(context, b, dateFmt)).toList(),
-            ),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          if (upcoming.isNotEmpty) ...[
+            const Text('Upcoming & Active', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: PsEvColors.mutedText)),
+            const SizedBox(height: 8),
+            ...upcoming.map((b) => _bookingCard(context, b, dateFmt)),
+            const SizedBox(height: 12),
+          ],
+          if (past.isNotEmpty) ...[
+            const Text('Past Sessions', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: PsEvColors.mutedText)),
+            const SizedBox(height: 8),
+            ...past.map((b) => _bookingCard(context, b, dateFmt)),
+          ],
+        ],
+      ),
     );
   }
 
@@ -97,7 +130,12 @@ class _MyBookingsScreenState extends State<MyBookingsScreen> {
                 ],
               ),
               const SizedBox(height: 8),
-              Text('Held: ${b.heldAmount.toStringAsFixed(0)} EGP', style: const TextStyle(fontSize: 12, color: PsEvColors.mutedText)),
+              Text(
+                b.status == BookingStatus.completed
+                    ? 'Charged: ${b.actualCost?.toStringAsFixed(0) ?? '-'} EGP of ${b.heldAmount.toStringAsFixed(0)} EGP held'
+                    : 'Held: ${b.heldAmount.toStringAsFixed(0)} EGP',
+                style: const TextStyle(fontSize: 12, color: PsEvColors.mutedText),
+              ),
               if (inProgress) ...[
                 const SizedBox(height: 8),
                 Container(

@@ -5,6 +5,7 @@ import '../../services/auth_service.dart';
 import '../../services/booking_service.dart';
 import '../../services/notification_service.dart';
 import '../../services/push_notification_service.dart';
+import '../../services/wallet_service.dart';
 import '../../state/app_state.dart';
 import '../../theme/ps_ev_theme.dart';
 import '../../theme/ps_ev_app_bar.dart';
@@ -42,16 +43,25 @@ class _SignInScreenState extends State<SignInScreen> {
     try {
       await context.read<AuthService>().signIn(_emailCtrl.text.trim(), _passwordCtrl.text);
       if (!mounted) return;
-      final uid = context.read<AuthService>().uid;
+      final auth = context.read<AuthService>();
+      final uid = auth.uid;
       if (uid != null) {
         await context.read<AppState>().setCurrentUserAndHydrate(uid);
         if (!mounted) return;
-        // Same fix as RegisterScreen: start booking/notification sync
-        // and register this device for push immediately on sign-in,
-        // not only on the next cold app start.
         context.read<BookingService>().hydrate(uid);
         context.read<NotificationService>().listenFor(uid);
         await PushNotificationService.initAndRegister(uid);
+        // FIX (3/9 update): sign-in is also where the admin's live,
+        // all-top-ups listener must be attached - previously this was
+        // only ever set up in main.dart on a fresh cold app start, so
+        // signing in fresh via this screen (without restarting the app)
+        // never gave the admin visibility into other drivers' pending
+        // top-ups either.
+        final wallet = context.read<WalletService>();
+        await wallet.hydrateFromFirestore(uid);
+        if (auth.isAdmin) {
+          wallet.listenToAllTopUpRequestsForAdmin();
+        }
       }
       if (!mounted) return;
       Navigator.pop(context, true);

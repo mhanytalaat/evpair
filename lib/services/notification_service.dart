@@ -6,21 +6,27 @@ import '../models/app_notification.dart';
 
 /// Keeps a live (real-time) list of the signed-in user's notifications,
 /// and exposes `unreadCount` for the badge shown on the profile avatar in
-/// the footer nav (see DriverHomeScreen._footerProfileAvatar) - this is
-/// what makes "notifications should be active" actually true: the badge
-/// updates the instant a new notification document arrives, with no
-/// pull-to-refresh or app restart needed.
+/// the footer nav (see DriverHomeScreen._footerProfileAvatar).
 ///
-/// IMPORTANT: creating a notification here ONLY writes the Firestore
-/// document - it does NOT by itself send a push notification to a
-/// closed/backgrounded app. That part is handled server-side by a Cloud
-/// Function trigger on this same `notifications` collection (see
-/// functions/index.js) which reads the recipient's saved FCM device
-/// token (see PushNotificationService) and calls the FCM Admin SDK to
-/// actually deliver the push. This split (client writes the "what
-/// happened" doc, server delivers the push) is required because a client
-/// app can never be trusted to hold the credentials needed to push to
-/// ANOTHER user's device directly.
+/// FIX (3/9 update - "no notification badge appeared on the profile icon
+/// even after opening the app"): the query previously combined
+/// `.where('recipientId', isEqualTo: userId)` with
+/// `.orderBy('createdAt', descending: true)`. Firestore REQUIRES a
+/// composite index for a where-on-one-field + orderBy-on-a-different-
+/// field query - without that index manually created in the console,
+/// the query throws a `failed-precondition: The query requires an
+/// index...` error. That error was only ever logged via
+/// `onError: (e) => debugPrint(...)` and silently swallowed - so the
+/// listener simply never delivered any data, the notification list
+/// stayed empty, and the badge never appeared, even though the
+/// `AppNotification` document itself was very likely created correctly
+/// in Firestore by BookingService.createRequest.
+///
+/// FIX: the query now ONLY filters by `recipientId` (a single-field
+/// equality filter, which Firestore always auto-indexes with zero setup
+/// required) and sorts the results by `createdAt` CLIENT-SIDE in Dart
+/// instead. This removes the need for you to ever manually create a
+/// Firestore index for this feature.
 class NotificationService extends ChangeNotifier {
   NotificationService({FirebaseFirestore? firestore}) : _db = firestore ?? FirebaseFirestore.instance;
   final FirebaseFirestore _db;
@@ -42,12 +48,15 @@ class NotificationService extends ChangeNotifier {
     _subscription = _db
         .collection('notifications')
         .where('recipientId', isEqualTo: userId)
-        .orderBy('createdAt', descending: true)
-        .limit(100)
+        // NOTE: intentionally no .orderBy() here anymore - see class
+        // doc above. Sorting happens client-side below instead, which
+        // requires no Firestore composite index at all.
+        .limit(200)
         .snapshots()
         .listen(
       (snapshot) {
-        _notifications = snapshot.docs.map((d) => AppNotification.fromFirestore(d.id, d.data())).toList();
+        _notifications = snapshot.docs.map((d) => AppNotification.fromFirestore(d.id, d.data())).toList()
+          ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
         notifyListeners();
       },
       onError: (e) => debugPrint('NotificationService: listener error: $e'),

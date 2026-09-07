@@ -129,11 +129,15 @@ class _BookingRequestScreenState extends State<BookingRequestScreen> {
     final bookingService = context.read<BookingService>();
     final charger = widget.charger;
     final slot = widget.slot;
+
     final range = _resolveRange();
     final minutes = range.end.difference(range.start).inMinutes;
     final withinBounds = slot.canFit(range.start, range.end);
     final meetsMinimum = minutes >= kMinBookingMinutes;
-    final rangeValid = withinBounds && meetsMinimum;
+    // FIX (7/9 update, item #8): reject a past start time right in the
+    // picker's validation instead of only on submit.
+    final isPastStart = range.start.isBefore(DateTime.now());
+    final rangeValid = withinBounds && meetsMinimum && !isPastStart;
     final total = rangeValid
         ? PricingService.computeCost(model: charger.pricingModel, price: charger.price, powerKw: charger.powerKw, minutes: minutes.toDouble())
         : 0.0;
@@ -236,9 +240,13 @@ class _BookingRequestScreenState extends State<BookingRequestScreen> {
                           const SizedBox(width: 8),
                           Expanded(
                             child: Text(
-                              !withinBounds
-                                  ? 'Your chosen time must be fully within the host\'s free window (${timeFmt.format(slot.start)} – ${timeFmt.format(slot.end)}).'
-                                  : 'Minimum booking duration is $kMinBookingMinutes minutes.',
+
+                              isPastStart
+                                  ? "This time has already passed - please choose a current or upcoming time."
+                                  : (!withinBounds
+                                      ? "Your chosen time must be fully within the host's free window (${timeFmt.format(slot.start)} - ${timeFmt.format(slot.end)})."
+                                      : 'Minimum booking duration is $kMinBookingMinutes minutes.'),
+                                      
                               style: const TextStyle(color: PsEvColors.redChipText, fontSize: 12),
                             ),
                           ),

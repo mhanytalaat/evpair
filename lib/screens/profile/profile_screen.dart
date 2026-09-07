@@ -8,6 +8,7 @@ import '../../services/notification_service.dart';
 import '../../services/partner_service.dart';
 import '../../services/profile_photo_service.dart';
 import '../../services/push_notification_service.dart';
+import '../../services/wallet_service.dart';
 import '../../state/app_state.dart';
 import '../../theme/ps_ev_theme.dart';
 import '../auth/register_screen.dart';
@@ -40,17 +41,18 @@ class ProfileScreen extends StatelessWidget {
       ),
     );
     if (confirmed != true) return;
-    // Item #5 of the 31/8 update (notification hygiene): stop this
-    // device's booking/notification listeners and remove its push token
-    // BEFORE signing out - otherwise a shared/borrowed device could keep
-    // receiving push notifications meant for the account that just
-    // signed out, and the listeners would keep querying with a uid that
-    // no longer matches this session.
     final uid = context.read<AppState>().currentUserId;
     if (uid != null) {
       await PushNotificationService.removeTokenForCurrentDevice(uid);
     }
     context.read<BookingService>().stopListening();
+    // FIX (3/9 update): stops WalletService's live balance/top-up
+    // listeners (including the admin's all-top-ups listener, if it was
+    // attached) on sign-out - without this, a signed-out device kept
+    // listening with a stale uid, and the next account signing in on
+    // this device could briefly see a flash of the previous account's
+    // cached wallet data.
+    context.read<WalletService>().stopListening();
     context.read<NotificationService>().stopListening();
     await context.read<AuthService>().signOut();
     if (!context.mounted) return;
@@ -198,7 +200,7 @@ class ProfileScreen extends StatelessWidget {
                   icon: Icons.notifications_outlined,
                   iconColor: PsEvColors.red,
                   title: 'Notifications',
-                  subtitle: notificationService.unreadCount > 0 ? '${notificationService.unreadCount} unread' : 'You\'re all caught up',
+                  subtitle: notificationService.unreadCount > 0 ? '${notificationService.unreadCount} unread' : "You're all caught up",
                   onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const NotificationsScreen())),
                 ),
                 const Divider(height: 1),

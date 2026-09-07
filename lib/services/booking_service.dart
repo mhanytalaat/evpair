@@ -28,7 +28,7 @@ class ChargerAccessDeniedException implements BookingRequestException {
 /// The driver's chosen custom time range is invalid: it doesn't fit
 /// within any of the host's free windows, it overlaps another driver's
 /// existing booking on the same charger, it's shorter than the minimum
-/// allowed duration, or end <= start.
+/// allowed duration, it's already in the past, or end <= start.
 class TimeRangeUnavailableException implements BookingRequestException {
   @override
   final String message;
@@ -39,26 +39,14 @@ class TimeRangeUnavailableException implements BookingRequestException {
 /// unrealistically short charging windows (e.g. 2 minutes).
 const int kMinBookingMinutes = 30;
 
-/// FIX: bookings are now persisted to, and kept live-synced from,
-/// Firestore's `bookings` collection - previously this service kept
-/// bookings ONLY in an in-memory `_bookings` list, which meant a booking
-/// created by a driver on their phone was NEVER visible to the host on a
-/// different phone, no matter how many times the host opened Manage
-/// Charger. That was the real cause of "the host isn't notified even
-/// when opening the station" - there was nothing to see, because the
-/// data literally never left the driver's device.
-///
-/// Two live listeners are kept (bookings where I am the driver, and
-/// bookings where I am the host), merged into one local list - since a
-/// single user can be both a driver and a host. Every mutation
-/// (createRequest, hostRespond, driverCancel, adminCancel, startSession,
-/// completeSession) now writes through to Firestore, and creates an
-/// AppNotification for the other party where relevant (see
-/// NotificationService) - that's the "sending notification is mandatory"
-/// requirement.
+/// Bookings are persisted to, and kept live-synced from, Firestore's
+/// `bookings` collection via real-time listeners (see hydrate()) so a
+/// booking created by a driver is immediately visible to the host on a
+/// different device, and vice versa.
 class BookingService extends ChangeNotifier {
   BookingService({required this.walletService, required this.notificationService, FirebaseFirestore? firestore})
       : _db = firestore ?? FirebaseFirestore.instance;
+
   final _uuid = const Uuid();
   final WalletService walletService;
   final NotificationService notificationService;
@@ -114,18 +102,67 @@ class BookingService extends ChangeNotifier {
 
   List<Booking> bookingsForDriver(String driverId) =>
       _bookingsById.values.where((b) => b.driverId == driverId).toList();
+
   List<Booking> ongoingForDriver(String driverId) => _bookingsById.values
       .where((b) => b.driverId == driverId && BookingService.ongoingStatuses.contains(b.status))
-      .toList();
+      .toList()
+    ..sort((a, b) => a.requestedStart.compareTo(b.requestedStart));
+
+  /// FIX (7/9 update, items #4/#9/#14): the driver's PAST sessions
+  /// (completed OR cancelled/declined/expired) were previously only ever
+  /// reachable nowhere at all - "My Bookings" (see
+  /// screens/driver/my_bookings_screen.dart) only ever showed
+  /// [ongoingForDriver]. Sorted most-recent-first so the latest history
+  /// shows up top.
+  List<Booking> pastForDriver(String driverId) => _bookingsById.values
+      .where((b) => b.driverId == driverId &&
+          (b.status == BookingStatus.completed || BookingService.cancelledStatuses.contains(b.status)))
+      .toList()
+    ..sort((a, b) => (b.sessionEndedAt ?? b.requestedEnd).compareTo(a.sessionEndedAt ?? a.requestedEnd));
+
   List<Booking> pendingApprovalsForHost(String hostId) =>
       _bookingsById.values.where((b) => b.hostId == hostId && b.status == BookingStatus.pendingHostApproval).toList();
+
   List<Booking> confirmedForHost(String hostId) =>
-      _bookingsById.values.where((b) => b.hostId == hostId && b.status == BookingStatus.confirmed).toList();
+      _bookingsById.values.where((b) => b.hostId == hostId && b.status == BookingStatus.confirmed).toList()
+        ..sort((a, b) => a.requestedStart.compareTo(b.requestedStart));
+
   List<Booking> inProgressForHost(String hostId) =>
       _bookingsById.values.where((b) => b.hostId == hostId && b.status == BookingStatus.inProgress).toList();
+
+  /// FIX (7/9 update, item #4): the host side of "Active Sessions" (see
+  /// screens/host/host_scan_screen.dart) previously had no way at all to
+  /// show past/completed stations that were rented out - only the
+  /// currently booked/charging ones. Sorted most-recent-first.
+  List<Booking> completedForHost(String hostId) => _bookingsById.values
+      .where((b) => b.hostId == hostId && b.status == BookingStatus.completed)
+      .toList()
+    ..sort((a, b) => (b.sessionEndedAt ?? b.requestedEnd).compareTo(a.sessionEndedAt ?? a.requestedEnd));
+
   List<Booking> activeForHost(String hostId) => _bookingsById.values
       .where((b) => b.hostId == hostId && (b.status == BookingStatus.confirmed || b.status == BookingStatus.inProgress))
       .toList();
+
+  /// All of a driver's bookings that are currently CONFIRMED or
+  /// IN-PROGRESS - i.e. their "live" active session(s), if any.
+  ///
+  /// FIX (7/9 update, items #4/#9/#15): the home screen's green
+  /// "Confirmed at .../Charging at ..." banner and the footer's active-
+  /// session shortcut previously relied ENTIRELY on
+  /// `AppState.lastDriverBookingId` - a plain in-memory field that is
+  /// only ever set at the moment a NEW booking is created in the CURRENT
+  /// app session, and is never persisted or reloaded from Firestore. The
+  /// very first time the app is reopened (or the driver signs back in on
+  /// another device) after creating a booking, `lastDriverBookingId` is
+  /// null again even though the booking itself is still very much
+  /// confirmed/in-progress in Firestore - which is exactly why the
+  /// banner/footer indicator went "always empty" after a restart. Screens
+  /// should now derive the active booking from this LIVE query instead of
+  /// from `AppState.lastDriverBookingId`.
+  List<Booking> activeForDriver(String driverId) => _bookingsById.values
+      .where((b) => b.driverId == driverId && (b.status == BookingStatus.confirmed || b.status == BookingStatus.inProgress))
+      .toList()
+    ..sort((a, b) => a.requestedStart.compareTo(b.requestedStart));
 
   Booking? findById(String id) => _bookingsById[id];
 
@@ -140,6 +177,7 @@ class BookingService extends ChangeNotifier {
     BookingStatus.declinedByHost,
     BookingStatus.cancelledByDriver,
     BookingStatus.cancelledByAdmin,
+    BookingStatus.expired,
   ];
 
   List<Booking> filterByCategory(String category) {
@@ -162,26 +200,12 @@ class BookingService extends ChangeNotifier {
   List<Booking> _liveBookingsForCharger(String chargerId) =>
       _bookingsById.values.where((b) => b.chargerId == chargerId && ongoingStatuses.contains(b.status)).toList();
 
-  /// FIX for "the requestor doesn't know the new available times for the
-  /// same station - showing booked from-to is better": returns the
-  /// currently-booked (start, end) ranges for a charger, sorted
-  /// chronologically, so DriverHomeScreen can show e.g. "Booked 2:00 PM –
-  /// 4:00 PM" directly under a free window instead of only surfacing a
-  /// generic conflict error after the driver already tried and failed to
-  /// book that exact time.
   List<({DateTime start, DateTime end})> bookedRangesFor(String chargerId) {
     final ranges = _liveBookingsForCharger(chargerId).map((b) => (start: b.requestedStart, end: b.requestedEnd)).toList();
     ranges.sort((a, b) => a.start.compareTo(b.start));
     return ranges;
   }
 
-  /// Checks whether a CUSTOM time range from `start` up to (but not
-  /// including) `end` can actually be booked on this charger:
-  ///   1. It must fit entirely within at least one of the host's free
-  ///      windows (e.g. a 2:00 PM-4:00 PM request must fit inside a
-  ///      10:00 AM-10:00 PM window).
-  ///   2. It must NOT overlap any other currently-live booking already
-  ///      made on this same charger (by this or any other driver).
   bool isRangeAvailable(ChargerProfile charger, DateTime start, DateTime end) {
     final fitsSomeWindow = charger.freeSlots.any((s) => s.canFit(start, end));
     if (!fitsSomeWindow) return false;
@@ -193,9 +217,7 @@ class BookingService extends ChangeNotifier {
 
   /// Creates a booking request for a CUSTOM driver-chosen time range
   /// (which may be a sub-range of a larger host-defined free window).
-  /// Persists the booking to Firestore and notifies the host (both an
-  /// in-app AppNotification and, via the Cloud Function trigger, a real
-  /// push notification to their device).
+  /// Persists the booking to Firestore and notifies the host.
   Future<Booking> createRequest({
     required String driverId,
     required String driverName,
@@ -216,13 +238,26 @@ class BookingService extends ChangeNotifier {
     if (!requestedEnd.isAfter(requestedStart)) {
       throw TimeRangeUnavailableException('End time must be after start time.');
     }
+    // The booking's requestedStart/End combine the HOST'S FREE-WINDOW
+    // DATE with the driver's chosen time-of-day (see
+    // BookingRequestScreen._resolveRange). Rejecting any booking whose
+    // resolved start time is already in the past prevents a driver from
+    // ever booking an already-past time (item #8 of the 7/9 update),
+    // whether that's because they picked a time earlier today, or booked
+    // against a leftover/old free window.
+    final now = DateTime.now();
+    if (requestedStart.isBefore(now.subtract(const Duration(minutes: 1)))) {
+      throw TimeRangeUnavailableException(
+        'This time has already passed. Please pick a current or upcoming time.',
+      );
+    }
     final minutes = requestedEnd.difference(requestedStart).inMinutes;
     if (minutes < kMinBookingMinutes) {
       throw TimeRangeUnavailableException('Minimum booking duration is $kMinBookingMinutes minutes.');
     }
     if (!isRangeAvailable(charger, requestedStart, requestedEnd)) {
       throw TimeRangeUnavailableException(
-        'That time range is no longer available - it may be outside the host\'s free window or overlap another booking.',
+        "That time range is no longer available - it may be outside the host's free window or overlap another booking.",
       );
     }
     final heldAmount = PricingService.computeCost(
@@ -259,7 +294,6 @@ class BookingService extends ChangeNotifier {
     _bookingsById[booking.id] = booking;
     notifyListeners();
     await _db.collection('bookings').doc(booking.id).set(booking.toFirestore());
-    // Mandatory notification to the host - see class doc above.
     await notificationService.notify(
       recipientId: charger.hostId,
       type: NotificationType.bookingRequested,
@@ -342,12 +376,6 @@ class BookingService extends ChangeNotifier {
     return ok;
   }
 
-  /// Stops an in-progress session, settles the actual charging cost
-  /// against the wallet hold, and charges an overstay penalty (see
-  /// Booking.completeAndSettle / kOverstayGraceMinutes /
-  /// kOverstayPenaltyPerMinute) if the driver left the car
-  /// parked/plugged in more than the grace period past the originally
-  /// booked end time.
   Future<void> completeSession(String bookingId) async {
     final booking = findById(bookingId);
     if (booking == null) return;
@@ -379,6 +407,6 @@ class BookingService extends ChangeNotifier {
       final ampm = d.hour >= 12 ? 'PM' : 'AM';
       return '$h:${two(d.minute)} $ampm';
     }
-    return '${fmt(start)} – ${fmt(end)}';
+    return '${fmt(start)} - ${fmt(end)}';
   }
 }

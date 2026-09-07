@@ -9,7 +9,6 @@ import '../models/rating.dart';
 /// only by `raterRole`.
 class RatingService extends ChangeNotifier {
   RatingService({FirebaseFirestore? firestore}) : _db = firestore ?? FirebaseFirestore.instance;
-
   final FirebaseFirestore _db;
   final _uuid = const Uuid();
 
@@ -24,6 +23,12 @@ class RatingService extends ChangeNotifier {
   // Cache of fetched summaries so re-opening the same charger/driver
   // profile repeatedly doesn't re-query every time within a session.
   final Map<String, RatingSummary> _summaryCache = {};
+
+  // FIX (7/9 update, item #12 - "can't find reviews on stations"):
+  // caches the full list of individual reviews (with comments) per
+  // chargerId, so StationReviewsScreen doesn't re-query Firestore every
+  // time the same station's reviews are re-opened within a session.
+  final Map<String, List<Rating>> _reviewsCache = {};
 
   /// Loads which bookings the signed-in user has already rated, so the
   /// "Rate your experience" prompt can be hidden correctly as soon as
@@ -61,7 +66,6 @@ class RatingService extends ChangeNotifier {
     String? comment,
   }) async {
     assert(stars >= 1 && stars <= 5, 'stars must be between 1 and 5');
-
     final rating = Rating(
       id: _uuid.v4(),
       bookingId: bookingId,
@@ -72,13 +76,12 @@ class RatingService extends ChangeNotifier {
       stars: stars,
       comment: (comment == null || comment.trim().isEmpty) ? null : comment.trim(),
     );
-
     _myRatedBookings.putIfAbsent(bookingId, () => {}).add(raterRole.name);
-    // Invalidate any cached summary for the ratee so the next view of
-    // their profile/charger reflects this new rating.
+    // Invalidate any cached summary/review-list for the ratee and for
+    // this charger so the next view reflects this new rating.
     _summaryCache.remove(rateeId);
+    _reviewsCache.remove(chargerId);
     notifyListeners();
-
     await _db.collection('ratings').doc(rating.id).set(rating.toFirestore());
     return rating;
   }
@@ -112,4 +115,33 @@ class RatingService extends ChangeNotifier {
   /// session) - handy for widgets that already trigger fetchSummaryFor
   /// in initState and just want the cached value on rebuild.
   RatingSummary? cachedSummaryFor(String userId) => _summaryCache[userId];
+
+  /// FIX (7/9 update, item #12): returns the full list of individual
+  /// reviews (star rating + optional written comment + when it was
+  /// left) that DRIVERS have left about a specific charging station,
+  /// most-recent-first. Previously there was no way at all to read the
+  /// actual text of a review anywhere in the app - only the aggregate
+  /// "4.8 (12)" badge existed (see widgets/host_rating_badge.dart),
+  /// which has no way to show individual comments. See
+  /// screens/shared/station_reviews_screen.dart for the screen that
+  /// uses this.
+  Future<List<Rating>> fetchReviewsForCharger(String chargerId, {bool forceRefresh = false}) async {
+    if (!forceRefresh && _reviewsCache.containsKey(chargerId)) {
+      return _reviewsCache[chargerId]!;
+    }
+    try {
+      final snap = await _db
+          .collection('ratings')
+          .where('chargerId', isEqualTo: chargerId)
+          .where('raterRole', isEqualTo: RaterRole.driver.name)
+          .get();
+      final reviews = snap.docs.map((d) => Rating.fromFirestore(d.id, d.data())).toList()
+        ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      _reviewsCache[chargerId] = reviews;
+      return reviews;
+    } catch (e) {
+      debugPrint('RatingService.fetchReviewsForCharger failed: $e');
+      return const [];
+    }
+  }
 }
