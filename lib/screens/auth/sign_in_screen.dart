@@ -61,7 +61,10 @@ class _SignInScreenState extends State<SignInScreen> {
         await wallet.hydrateFromFirestore(uid);
         if (auth.isAdmin) {
           wallet.listenToAllTopUpRequestsForAdmin();
+          wallet.listenToAllPayoutsForAdmin();                    // <-- NEW
         }
+
+        
       }
       if (!mounted) return;
       Navigator.pop(context, true);

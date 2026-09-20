@@ -27,7 +27,7 @@ import '../partner/home_installation_screen.dart';
 import 'wallet_screen.dart';
 import 'booking_status_screen.dart';
 import 'booking_request_screen.dart';
-import 'my_bookings_screen.dart';
+import 'my_bookings_screen.dart' show MyBookingsScreen, BookingsViewMode;
 import '../shared/station_reviews_screen.dart';
 
 enum _ChargerAccessState { standardMismatch, residentsOnlyLocked, full, available }
@@ -346,6 +346,13 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
     final driverActiveBookings = bookingService.activeForDriver(app.currentUserId ?? '');
     final activeBooking = driverActiveBookings.isEmpty ? null : driverActiveBookings.first;
     final hasActiveBooking = activeBooking != null;
+          // NEW (9/15 update): surfaces host-side pending requests / running
+      // sessions right on the home map, so a host doesn't have to open
+      // My Stations -> a specific charger just to see or act on these.
+      final hostPendingApprovals = bookingService.pendingApprovalsForHost(app.currentUserId ?? '');
+      final hostInProgress = bookingService.inProgressForHost(app.currentUserId ?? '');
+      final hasHostPending = hostPendingApprovals.isNotEmpty;
+      final hasHostRunning = hostInProgress.isNotEmpty;
 
     final chargers = allChargers.where((c) {
       if (_selectedCity != null && c.city != _selectedCity) return false;
@@ -552,6 +559,23 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
               right: 16,
               child: _buildLiveSessionBanner(context, activeBooking),
             ),
+ if (hasHostPending)
+            Positioned(
+              top: MediaQuery.of(context).padding.top + (hasActiveBooking ? 130 : 70),
+              left: 16,
+              right: 16,
+              child: _buildHostPendingBanner(context, hostPendingApprovals.length),
+            ),
+          if (hasHostRunning)
+            Positioned(
+              top: MediaQuery.of(context).padding.top +
+                  (hasActiveBooking ? 130 : 70) + (hasHostPending ? 60 : 0),
+              left: 16,
+              right: 16,
+              child: _buildHostRunningBanner(context, hostInProgress.length),
+            ),
+
+
           DraggableScrollableSheet(
             controller: _sheetController,
             initialChildSize: 0.4,
@@ -1046,6 +1070,85 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
     );
   }
 
+ Widget _buildHostPendingBanner(BuildContext context, int count) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: () => Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => const MyBookingsScreen(
+              showPastSessions: false,
+              initialMode: BookingsViewMode.asHost,
+            ),
+          ),
+        ),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          decoration: BoxDecoration(
+            color: PsEvColors.amber,
+            borderRadius: BorderRadius.circular(16),
+            boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.2), blurRadius: 10, offset: const Offset(0, 4))],
+          ),
+          child: Row(
+            children: [
+              const Icon(Icons.pending_actions, color: Colors.white, size: 20),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  '$count booking request${count == 1 ? '' : 's'} waiting for your approval',
+                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                ),
+              ),
+              const Icon(Icons.chevron_right, color: Colors.white),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHostRunningBanner(BuildContext context, int count) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: () => Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => const MyBookingsScreen(
+              showPastSessions: false,
+              initialMode: BookingsViewMode.asHost,
+            ),
+          ),
+        ),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          decoration: BoxDecoration(
+            color: PsEvColors.blue,
+            borderRadius: BorderRadius.circular(16),
+            boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.2), blurRadius: 10, offset: const Offset(0, 4))],
+          ),
+          child: Row(
+            children: [
+              const Icon(Icons.bolt, color: Colors.white, size: 20),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  '$count of your station${count == 1 ? '' : 's'} currently charging',
+                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                ),
+              ),
+              const Icon(Icons.chevron_right, color: Colors.white),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+
   Widget _buildFloatingFooter(BuildContext context, AppState app, AuthService auth, bool hasActiveBooking, NotificationService notificationService) {
     return Container(
       height: 64,
@@ -1083,7 +1186,10 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> {
               if (!ok || !context.mounted) return;
               // FIX (7/9 update, items #4/#9): always open My Bookings,
               // which now shows Upcoming/Active AND Past sections.
-              Navigator.push(context, MaterialPageRoute(builder: (_) => const MyBookingsScreen()));
+               Navigator.push(context, MaterialPageRoute(
+                builder: (_) => const MyBookingsScreen(showPastSessions: false),
+              ));
+
             },
           ),
 

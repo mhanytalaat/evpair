@@ -3,14 +3,40 @@ import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import '../../models/app_notification.dart';
 import '../../services/notification_service.dart';
+import '../../services/auth_service.dart';
 import '../../state/app_state.dart';
 import '../../theme/ps_ev_theme.dart';
+import '../admin/admin_home_screen.dart';
+import '../driver/booking_status_screen.dart';
+import '../driver/my_bookings_screen.dart' show MyBookingsScreen, BookingsViewMode;
+import '../driver/wallet_screen.dart';
 
 /// In-app notification center - reached by tapping the bell icon (with
 /// unread-count badge) in DriverHomeScreen's top bar, or the
 /// Notifications row in Profile.
+///
+/// FIX (9/17 update - "I need the notification to redirect to the
+/// request"): notifications previously had NO `onTap` at all - tapping
+/// one did nothing except show it highlighted/read. Added `_onTap`,
+/// which routes to the most relevant screen based on the
+/// notification's `type` (and `bookingId` where relevant):
+///   - bookingRequested (host receives a new request) -> jumps straight
+///     into My Bookings, "As Host" mode, Pending Approval section -
+///     exactly the "redirect to the request" behavior asked for.
+///   - bookingApproved / bookingDeclined / sessionStarted (driver side,
+///     always carries a bookingId) -> opens that exact booking's status
+///     screen.
+///   - topUpApproved / topUpRejected -> opens the Wallet screen.
+///   - other (covers: admin "new top-up request" / "payout ready for
+///     review", and host "payout released") -> a simple keyword check
+///     on the title routes an ADMIN to the matching Admin tab
+///     (Top-Ups/Payouts), or a HOST to their Wallet screen for a payout
+///     release notice. The generic "Test Notification" (also type
+///     `other`) has no natural destination and is simply left as a
+///     no-op tap, same as before.
 class NotificationsScreen extends StatefulWidget {
   const NotificationsScreen({super.key});
+
   @override
   State<NotificationsScreen> createState() => _NotificationsScreenState();
 }
@@ -58,6 +84,55 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         return PsEvColors.red;
       case NotificationType.other:
         return PsEvColors.mutedText;
+    }
+  }
+
+  /// NEW (9/17 update): routes a tapped notification to the most
+  /// relevant screen. See class doc above for the full mapping.
+  Future<void> _onTap(BuildContext context, AppNotification n) async {
+    if (!n.isRead) {
+      await context.read<NotificationService>().markRead(n.id);
+    }
+    if (!context.mounted) return;
+
+    switch (n.type) {
+      case NotificationType.bookingRequested:
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => const MyBookingsScreen(showPastSessions: false, initialMode: BookingsViewMode.asHost),
+          ),
+        );
+        break;
+      case NotificationType.bookingApproved:
+      case NotificationType.bookingDeclined:
+      case NotificationType.sessionStarted:
+        if (n.bookingId != null && n.bookingId!.isNotEmpty) {
+          Navigator.push(context, MaterialPageRoute(builder: (_) => BookingStatusScreen(bookingId: n.bookingId!)));
+        }
+        break;
+      case NotificationType.topUpApproved:
+      case NotificationType.topUpRejected:
+        Navigator.push(context, MaterialPageRoute(builder: (_) => const WalletScreen()));
+        break;
+      case NotificationType.other:
+        final title = n.title.toLowerCase();
+        final isAdmin = context.read<AuthService>().isAdmin;
+        if (title.contains('top-up') || title.contains('topup')) {
+          if (isAdmin) {
+            Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminHomeScreen(initialTab: 0)));
+          }
+        } else if (title.contains('payout')) {
+          if (isAdmin) {
+            Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminHomeScreen(initialTab: 1)));
+          } else {
+            Navigator.push(context, MaterialPageRoute(builder: (_) => const WalletScreen()));
+          }
+        }
+        // "Test Notification" and any other generic `other` message has
+        // no natural destination - tapping it just marks it read, same
+        // as before.
+        break;
     }
   }
 
@@ -155,6 +230,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                       return Card(
                         color: n.isRead ? null : PsEvColors.emeraldPale,
                         child: ListTile(
+                          onTap: () => _onTap(context, n),
                           leading: CircleAvatar(
                             backgroundColor: _colorFor(n.type).withOpacity(0.15),
                             child: Icon(_iconFor(n.type), color: _colorFor(n.type), size: 20),
@@ -168,6 +244,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                               Text(dateFmt.format(n.createdAt), style: const TextStyle(fontSize: 10, color: PsEvColors.mutedText)),
                             ],
                           ),
+                          trailing: const Icon(Icons.chevron_right, color: PsEvColors.mutedText),
                         ),
                       );
                     },

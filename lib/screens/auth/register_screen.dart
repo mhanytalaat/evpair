@@ -96,10 +96,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
         // likely the real cause of "top-up shows 0 after logging off
         // and back on": logging back IN (rather than a full app
         // restart) never loaded the wallet balance/top-ups at all.
-        final wallet = context.read<WalletService>();
+                final wallet = context.read<WalletService>();
         await wallet.hydrateFromFirestore(uid);
         if (auth.isAdmin) {
           wallet.listenToAllTopUpRequestsForAdmin();
+          wallet.listenToAllPayoutsForAdmin();                    // <-- NEW
         }
       }
       if (!mounted) return;

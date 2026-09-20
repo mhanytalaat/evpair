@@ -7,16 +7,30 @@ import '../../models/enums.dart';
 import '../../theme/ps_ev_theme.dart';
 import '../../theme/ps_ev_app_bar.dart';
 
+/// FIX (9/17 update - "I need the notification to redirect to the
+/// request"): added an optional [initialTab] constructor param (0 =
+/// Top-Ups, 1 = Payouts, 2 = Bookings; defaults to 0, matching the
+/// previous always-Top-Ups-first behavior exactly) so
+/// notifications_screen.dart can deep-link an admin straight into the
+/// correct tab for a "New top-up request" or "Payout ready for review"
+/// notification, instead of always landing on Top-Ups regardless of
+/// which one was tapped.
 class AdminHomeScreen extends StatefulWidget {
-  const AdminHomeScreen({super.key});
-
+  final int initialTab;
+  const AdminHomeScreen({super.key, this.initialTab = 0});
   @override
   State<AdminHomeScreen> createState() => _AdminHomeScreenState();
 }
 
 class _AdminHomeScreenState extends State<AdminHomeScreen> {
-  int _tab = 0;
+  late int _tab;
   String _bookingFilter = 'ongoing';
+
+  @override
+  void initState() {
+    super.initState();
+    _tab = widget.initialTab;
+  }
 
   static const _statusText = {
     BookingStatus.pendingWalletHold: 'Pending wallet hold',
@@ -50,18 +64,25 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
             decoration: BoxDecoration(color: PsEvColors.slate200, borderRadius: BorderRadius.circular(14)),
             child: Row(
               children: [
-                Expanded(child: _tabButton('Top-Ups', 0)),
-                Expanded(child: _tabButton('Bookings', 1)),
+                Expanded(child: _tabButton('Top-Ups', 0, badge: wallet.pendingTopUps.length)),
+                Expanded(child: _tabButton('Payouts', 1, badge: wallet.pendingPayouts.length)),
+                Expanded(child: _tabButton('Bookings', 2)),
               ],
             ),
           ),
-          Expanded(child: _tab == 0 ? _buildTopUps(wallet) : _buildBookings(bookingService)),
+          Expanded(
+            child: switch (_tab) {
+              0 => _buildTopUps(wallet),
+              1 => _buildPayouts(wallet),
+              _ => _buildBookings(bookingService),
+            },
+          ),
         ],
       ),
     );
   }
 
-  Widget _tabButton(String label, int index) {
+  Widget _tabButton(String label, int index, {int badge = 0}) {
     final active = _tab == index;
     return InkWell(
       onTap: () => setState(() => _tab = index),
@@ -74,7 +95,20 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
           boxShadow: active ? [BoxShadow(color: Colors.black.withOpacity(0.12), blurRadius: 4)] : null,
         ),
         alignment: Alignment.center,
-        child: Text(label, style: TextStyle(color: active ? PsEvColors.emerald : PsEvColors.slateText, fontWeight: FontWeight.w600, fontSize: 13)),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(label, style: TextStyle(color: active ? PsEvColors.emerald : PsEvColors.slateText, fontWeight: FontWeight.w600, fontSize: 13)),
+            if (badge > 0) ...[
+              const SizedBox(width: 5),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                decoration: const BoxDecoration(color: PsEvColors.red, shape: BoxShape.circle),
+                child: Text('$badge', style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w800)),
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }
@@ -92,7 +126,7 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _UserInfoText(uid: t.driverId),
+                  _UserInfoText(uid: t.driverId, roleLabel: 'Driver'),
                   const SizedBox(height: 4),
                   Text('${t.amount.toStringAsFixed(0)} EGP via ${t.method.name}', style: const TextStyle(color: PsEvColors.mutedText, fontSize: 12)),
                   Text('Ref: ${t.referenceNote}', style: const TextStyle(color: PsEvColors.mutedText, fontSize: 12)),
@@ -102,6 +136,79 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
                       Expanded(child: OutlinedButton(onPressed: () => wallet.reviewTopUp(t.id, approve: false, adminNote: 'Proof invalid'), child: const Text('Reject'))),
                       const SizedBox(width: 8),
                       Expanded(child: ElevatedButton(onPressed: () => wallet.reviewTopUp(t.id, approve: true), child: const Text('Approve & Credit'))),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          )).toList(),
+    );
+  }
+
+  Widget _buildPayouts(WalletService wallet) {
+    final pending = wallet.pendingPayouts;
+    if (pending.isEmpty) {
+      return const Center(child: Text('No payouts waiting for release.', style: TextStyle(color: PsEvColors.mutedText)));
+    }
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: pending.map((p) => Card(
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Expanded(child: Text(p.chargerName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14))),
+                      PsEvStatusPill(label: 'Pending release', background: PsEvColors.amberChip, textColor: PsEvColors.amberChipText),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  _UserInfoText(uid: p.hostId, roleLabel: 'Host'),
+                  const SizedBox(height: 4),
+                  _UserInfoText(uid: p.driverId, roleLabel: 'Driver'),
+                  const SizedBox(height: 8),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(color: PsEvColors.slate100, borderRadius: BorderRadius.circular(12)),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('Calculation', style: TextStyle(fontSize: 11, color: PsEvColors.mutedText, fontWeight: FontWeight.w700)),
+                        const SizedBox(height: 2),
+                        Text(p.calculationLabel, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Driver charged: ${p.actualCost.toStringAsFixed(0)} EGP  •  Commission: ${(p.commissionRate * 100).toStringAsFixed(0)}%',
+                          style: const TextStyle(fontSize: 11, color: PsEvColors.mutedText),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Amount to release: ${p.hostAmount.toStringAsFixed(0)} EGP',
+                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: PsEvColors.emerald),
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: () => wallet.reviewPayout(p.id, approve: false, adminNote: 'Withheld by admin'),
+                          child: const Text('Reject'),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: ElevatedButton(
+                          onPressed: () => wallet.reviewPayout(p.id, approve: true),
+                          child: const Text('Release Payment'),
+                        ),
+                      ),
                     ],
                   ),
                 ],
@@ -148,7 +255,7 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
                                     crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
                                       Text(b.chargerName, style: const TextStyle(fontWeight: FontWeight.bold)),
-                                      _UserInfoText(uid: b.driverId),
+                                      _UserInfoText(uid: b.driverId, roleLabel: 'Driver'),
                                       Text(
                                         b.status == BookingStatus.completed
                                             ? 'Charged: ${b.actualCost?.toStringAsFixed(0) ?? '-'} EGP'
@@ -193,20 +300,48 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
   }
 }
 
-/// Resolves a Firebase Auth uid into the driver's actual first/last name +
+/// Resolves a Firebase Auth uid into the person's actual first/last name +
 /// mobile number by looking up the Firestore `users` collection, instead of
-/// showing the raw uid. Falls back to the uid itself while loading or if no
-/// profile document is found.
-class _UserInfoText extends StatelessWidget {
+/// showing the raw uid. `roleLabel` lets the same widget be reused for
+/// both "Driver:" and "Host:" lines (see the Payouts tab, which needs to
+/// show both on the same card).
+///
+/// FIX (9/17 update): converted to a StatefulWidget with a cached Future,
+/// same fix pattern as widgets/driver_info_line.dart - this screen has
+/// no per-second timer today so the impact was smaller here, but it's
+/// the same underlying anti-pattern (re-fetching Firestore on every
+/// rebuild) and is fixed for consistency/safety.
+class _UserInfoText extends StatefulWidget {
   final String uid;
-  const _UserInfoText({required this.uid});
+  final String roleLabel;
+  const _UserInfoText({required this.uid, this.roleLabel = 'Driver'});
+  @override
+  State<_UserInfoText> createState() => _UserInfoTextState();
+}
+
+class _UserInfoTextState extends State<_UserInfoText> {
+  late Future<DocumentSnapshot<Map<String, dynamic>>> _future;
+
+  @override
+  void initState() {
+    super.initState();
+    _future = FirebaseFirestore.instance.collection('users').doc(widget.uid).get();
+  }
+
+  @override
+  void didUpdateWidget(covariant _UserInfoText oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.uid != widget.uid) {
+      _future = FirebaseFirestore.instance.collection('users').doc(widget.uid).get();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     return FutureBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-      future: FirebaseFirestore.instance.collection('users').doc(uid).get(),
+      future: _future,
       builder: (context, snapshot) {
-        String label = uid;
+        String label = widget.uid;
         String? phone;
         if (snapshot.hasData && snapshot.data!.exists) {
           final data = snapshot.data!.data();
@@ -219,7 +354,7 @@ class _UserInfoText extends StatelessWidget {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Driver: $label', style: const TextStyle(fontWeight: FontWeight.bold)),
+            Text('${widget.roleLabel}: $label', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
             if (phone != null && phone.isNotEmpty)
               Text('Mobile: $phone', style: const TextStyle(color: PsEvColors.mutedText, fontSize: 12)),
           ],

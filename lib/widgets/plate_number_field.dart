@@ -10,20 +10,33 @@ import '../utils/plate_number_validator.dart';
 ///     2-letter plate).
 ///
 /// This matches how a real Egyptian plate reads: letters on the right,
-/// numbers on the left (the previous single free-text field required
-/// typing numbers-then-letters left-to-right in one box, which didn't
-/// match the physical plate layout at all). Letters are forced to
-/// uppercase English (A-Z) only, per requirement - Arabic input is not
-/// accepted here (though PlateNumberValidator itself still recognizes
-/// Arabic letters for any legacy/free-text data already stored).
+/// numbers on the left.
 ///
-/// Typing a letter automatically advances focus to the next letter box;
-/// backspacing on an empty box moves focus back to the previous one -
-/// standard OTP-style segmented input behavior.
+/// FIX (9/10 update - "Arabic letters are not working when typing, it
+/// doesn't type"): the letter boxes previously only accepted A-Z, even
+/// though real Egyptian plates are issued with ARABIC letters (and
+/// PlateNumberValidator itself already accepted Arabic - see
+/// utils/plate_number_validator.dart's `_lettersClass`). Typing an
+/// Arabic letter into a letter box was silently rejected by the
+/// `FilteringTextInputFormatter.allow(RegExp(r'[A-Za-z]'))` filter, so
+/// nothing appeared to happen. The filter now allows BOTH English
+/// (A-Z) and Arabic (\u0621-\u064A) letters, matching the validator.
+/// `UpperCaseTextFormatter` is harmless on Arabic text (Arabic has no
+/// letter case, so `.toUpperCase()` is a no-op there) and still
+/// uppercases any English letters typed.
+///
+/// FIX (9/10 update - "1234 in the field is confusing"): removed the
+/// `hintText: '1234'` placeholder on the digits field. Since the field
+/// already sits directly under the "Car plate number" label (see
+/// screens/driver/car_setup_screen.dart), an example placeholder value
+/// there read like a pre-filled real plate number rather than a hint -
+/// removed entirely in favor of the short explanatory caption already
+/// shown below the widget.
 class PlateNumberField extends StatefulWidget {
   /// Existing plate in normalized form (e.g. "123ABC"), if editing.
   final String? initialValue;
   final ValueChanged<String> onChanged;
+
   const PlateNumberField({super.key, this.initialValue, required this.onChanged});
 
   @override
@@ -34,6 +47,11 @@ class _PlateNumberFieldState extends State<PlateNumberField> {
   late final TextEditingController _digitsCtrl;
   late final List<TextEditingController> _letterCtrls;
   late final List<FocusNode> _letterFocusNodes;
+
+  // Allows English letters (A-Z / a-z) AND Arabic letters (\u0621-\u064A),
+  // matching PlateNumberValidator's accepted letter range - real Egyptian
+  // plates are issued with Arabic letters.
+  static final RegExp _allowedLetter = RegExp(r'[A-Za-z\u0621-\u064A]');
 
   @override
   void initState() {
@@ -92,7 +110,7 @@ class _PlateNumberFieldState extends State<PlateNumberField> {
           maxLength: 1,
           textCapitalization: TextCapitalization.characters,
           inputFormatters: [
-            FilteringTextInputFormatter.allow(RegExp(r'[A-Za-z]')),
+            FilteringTextInputFormatter.allow(_allowedLetter),
             UpperCaseTextFormatter(),
           ],
           decoration: const InputDecoration(counterText: '', contentPadding: EdgeInsets.symmetric(vertical: 14)),
@@ -121,7 +139,11 @@ class _PlateNumberFieldState extends State<PlateNumberField> {
                 keyboardType: TextInputType.number,
                 maxLength: 4,
                 inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                decoration: const InputDecoration(counterText: '', hintText: '1234'),
+                // No hintText here anymore - a placeholder value like
+                // "1234" read as a pre-filled real number. The field
+                // already sits directly under the "Car plate number"
+                // label above it (see car_setup_screen.dart).
+                decoration: const InputDecoration(counterText: ''),
                 style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18, letterSpacing: 1),
               ),
             ),
@@ -138,8 +160,8 @@ class _PlateNumberFieldState extends State<PlateNumberField> {
         const Padding(
           padding: EdgeInsets.only(top: 6),
           child: Text(
-            'Numbers on the left, letters on the right (English only) - '
-            'leave the 3rd letter box empty for a Giza-style 2-letter plate.',
+            'Numbers on the left, letters on the right - English or Arabic letters are both accepted. '
+            'Leave the 3rd letter box empty for a Giza-style 2-letter plate.',
             style: TextStyle(fontSize: 11, color: PsEvColors.mutedText),
           ),
         ),
@@ -151,7 +173,8 @@ class _PlateNumberFieldState extends State<PlateNumberField> {
 /// Forces every keystroke to uppercase as it's typed, so a lowercase "a"
 /// on a physical keyboard still shows/stores as "A" without needing
 /// textCapitalization (which only affects the on-screen keyboard's
-/// initial case, not what's actually typed).
+/// initial case, not what's actually typed). Arabic letters have no
+/// concept of case, so `.toUpperCase()` leaves them unchanged.
 class UpperCaseTextFormatter extends TextInputFormatter {
   @override
   TextEditingValue formatEditUpdate(TextEditingValue oldValue, TextEditingValue newValue) {

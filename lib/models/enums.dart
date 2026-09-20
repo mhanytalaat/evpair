@@ -16,6 +16,22 @@ enum TopUpStatus {
   rejected,
 }
 
+/// NEW (9/15 update - "once the charging is done the admin should have a
+/// request to release the payment after the calculation (kw * price) and
+/// it should be transferred to the host wallet"): tracks a single host
+/// payout through its review lifecycle. See models/payout_request.dart
+/// and services/wallet_service.dart (createPayoutRequest/reviewPayout)
+/// for where this is used - a booking completing no longer credits the
+/// host automatically; it creates a PayoutRequest with this status
+/// instead, and only an admin approving it (see
+/// screens/admin/admin_home_screen.dart's new Payouts tab) actually
+/// credits the host's wallet.
+enum PayoutStatus {
+  pendingReview,
+  approved,
+  rejected,
+}
+
 enum PaymentMethod {
   instapay,
   vodafoneCash,
@@ -63,12 +79,10 @@ extension ChargingStandardLabel on ChargingStandard {
         ChargingStandard.chineseGbT => 'Chinese (GB/T)',
         ChargingStandard.europeanCcs2 => 'European (CCS2 / Type 2)',
       };
-
   String get shortLabel => switch (this) {
         ChargingStandard.chineseGbT => 'GB/T',
         ChargingStandard.europeanCcs2 => 'CCS2/Type2',
       };
-
   List<ConnectorType> get compatibleConnectors => switch (this) {
         ChargingStandard.chineseGbT => const [ConnectorType.gbtAc, ConnectorType.gbtDc],
         ChargingStandard.europeanCcs2 => const [ConnectorType.type2, ConnectorType.ccs, ConnectorType.chademo, ConnectorType.type1],
@@ -88,7 +102,6 @@ extension WeekdayLabel on Weekday {
         Weekday.friday => 'Fri',
         Weekday.saturday => 'Sat',
       };
-
   int get dartWeekday => switch (this) {
         Weekday.monday => DateTime.monday,
         Weekday.tuesday => DateTime.tuesday,

@@ -11,20 +11,18 @@ import '../../widgets/driver_info_line.dart';
 
 /// Host-facing "Active Sessions" screen.
 ///
-/// FIX (7/9 update):
-///   - item #3: every booking card now resolves and shows the driver's
-///     actual NAME (via [DriverInfoLine]) instead of the raw
-///     `booking.driverId` Firestore characters.
-///   - item #4: now has a third "Past Sessions" section (completed
-///     bookings for this host's chargers), so a host can see stations
-///     they've previously rented out from the same screen instead of
-///     that history being unreachable anywhere.
-///   - item #14: sections are now clearly labelled Upcoming / Charging
-///     Now / Past, so "Booked - Awaiting Start" bookings are never
-///     confused with an actually-active (currently charging) session.
+/// FIX (9/15 update - "host can be able to stop the service as the host
+/// doesn't have the option of that"): the "Charging Now" card previously
+/// showed only a live duration counter with no action at all - the host
+/// had no way to end a session themselves and had to wait for the
+/// driver to stop it. Added a "Stop Session" button that calls
+/// `BookingService.hostStopSession()` (a clearly-named alias for the
+/// same `completeSession()` logic the driver already uses), with a
+/// confirmation dialog explaining that the payout now goes to admin for
+/// review before landing in the host's wallet (see
+/// services/wallet_service.dart's new payout-approval flow).
 class HostScanScreen extends StatefulWidget {
   const HostScanScreen({super.key});
-
   @override
   State<HostScanScreen> createState() => _HostScanScreenState();
 }
@@ -50,6 +48,31 @@ class _HostScanScreenState extends State<HostScanScreen> {
     final h = d.inHours, m = d.inMinutes % 60, s = d.inSeconds % 60;
     String two(int n) => n.toString().padLeft(2, '0');
     return h > 0 ? '${two(h)}:${two(m)}:${two(s)}' : '${two(m)}:${two(s)}';
+  }
+
+  Future<void> _confirmAndStop(BuildContext context, Booking b) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Stop this charging session?'),
+        content: const Text(
+          "This ends the driver's session now and calculates their final cost. "
+          'Your payout will be sent to admin for review before being released to your wallet.',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Stop Session')),
+        ],
+      ),
+    );
+    if (confirmed == true && context.mounted) {
+      await context.read<BookingService>().hostStopSession(b.id);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Session stopped. Payout is now waiting for admin review.'), backgroundColor: PsEvColors.emerald),
+        );
+      }
+    }
   }
 
   @override
@@ -87,7 +110,6 @@ class _HostScanScreenState extends State<HostScanScreen> {
         body: Center(child: Text('No sessions yet for your stations.', style: TextStyle(color: PsEvColors.mutedText))),
       );
     }
-
     return Scaffold(
       appBar: const PsEvAppBar(title: 'Active Sessions'),
       body: ListView(
@@ -159,6 +181,19 @@ class _HostScanScreenState extends State<HostScanScreen> {
                             ),
                           ),
                         ],
+                        // NEW (9/15 update): host-initiated stop, mirroring
+                        // the driver's own Stop button on
+                        // booking_status_screen.dart.
+                        const SizedBox(height: 12),
+                        SizedBox(
+                          width: double.infinity,
+                          child: OutlinedButton.icon(
+                            onPressed: () => _confirmAndStop(context, b),
+                            icon: const Icon(Icons.stop_circle_outlined, color: PsEvColors.red, size: 18),
+                            label: const Text('Stop Session', style: TextStyle(color: PsEvColors.red)),
+                            style: OutlinedButton.styleFrom(side: const BorderSide(color: PsEvColors.red)),
+                          ),
+                        ),
                       ],
                     ),
                   ),

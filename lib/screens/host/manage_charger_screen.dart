@@ -487,15 +487,39 @@ class _ManageChargerScreenState extends State<ManageChargerScreen> {
   }
 }
 
-class _DriverAndCarInfo extends StatelessWidget {
+class _DriverAndCarInfo extends StatefulWidget {
   final Booking booking;
   const _DriverAndCarInfo({required this.booking});
+
+  @override
+  State<_DriverAndCarInfo> createState() => _DriverAndCarInfoState();
+}
+
+class _DriverAndCarInfoState extends State<_DriverAndCarInfo> {
+  late Future<DocumentSnapshot<Map<String, dynamic>>> _future;
+
+  @override
+  void initState() {
+    super.initState();
+    _future = FirebaseFirestore.instance.collection('users').doc(widget.booking.driverId).get();
+  }
+
+  @override
+  void didUpdateWidget(covariant _DriverAndCarInfo oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.booking.driverId != widget.booking.driverId) {
+      _future = FirebaseFirestore.instance.collection('users').doc(widget.booking.driverId).get();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    final booking = widget.booking;
     return FutureBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-      future: FirebaseFirestore.instance.collection('users').doc(booking.driverId).get(),
+      future: _future,
       builder: (context, snapshot) {
-        var name = 'Driver'; String? phone;
+        var name = 'Driver';
+        String? phone;
         if (snapshot.hasData && snapshot.data!.exists) {
           final data = snapshot.data!.data();
           final first = data?['firstName'] as String? ?? '';
@@ -515,3 +539,4 @@ class _DriverAndCarInfo extends StatelessWidget {
     );
   }
 }
+

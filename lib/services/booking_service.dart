@@ -108,12 +108,6 @@ class BookingService extends ChangeNotifier {
       .toList()
     ..sort((a, b) => a.requestedStart.compareTo(b.requestedStart));
 
-  /// FIX (7/9 update, items #4/#9/#14): the driver's PAST sessions
-  /// (completed OR cancelled/declined/expired) were previously only ever
-  /// reachable nowhere at all - "My Bookings" (see
-  /// screens/driver/my_bookings_screen.dart) only ever showed
-  /// [ongoingForDriver]. Sorted most-recent-first so the latest history
-  /// shows up top.
   List<Booking> pastForDriver(String driverId) => _bookingsById.values
       .where((b) => b.driverId == driverId &&
           (b.status == BookingStatus.completed || BookingService.cancelledStatuses.contains(b.status)))
@@ -130,10 +124,6 @@ class BookingService extends ChangeNotifier {
   List<Booking> inProgressForHost(String hostId) =>
       _bookingsById.values.where((b) => b.hostId == hostId && b.status == BookingStatus.inProgress).toList();
 
-  /// FIX (7/9 update, item #4): the host side of "Active Sessions" (see
-  /// screens/host/host_scan_screen.dart) previously had no way at all to
-  /// show past/completed stations that were rented out - only the
-  /// currently booked/charging ones. Sorted most-recent-first.
   List<Booking> completedForHost(String hostId) => _bookingsById.values
       .where((b) => b.hostId == hostId && b.status == BookingStatus.completed)
       .toList()
@@ -143,22 +133,6 @@ class BookingService extends ChangeNotifier {
       .where((b) => b.hostId == hostId && (b.status == BookingStatus.confirmed || b.status == BookingStatus.inProgress))
       .toList();
 
-  /// All of a driver's bookings that are currently CONFIRMED or
-  /// IN-PROGRESS - i.e. their "live" active session(s), if any.
-  ///
-  /// FIX (7/9 update, items #4/#9/#15): the home screen's green
-  /// "Confirmed at .../Charging at ..." banner and the footer's active-
-  /// session shortcut previously relied ENTIRELY on
-  /// `AppState.lastDriverBookingId` - a plain in-memory field that is
-  /// only ever set at the moment a NEW booking is created in the CURRENT
-  /// app session, and is never persisted or reloaded from Firestore. The
-  /// very first time the app is reopened (or the driver signs back in on
-  /// another device) after creating a booking, `lastDriverBookingId` is
-  /// null again even though the booking itself is still very much
-  /// confirmed/in-progress in Firestore - which is exactly why the
-  /// banner/footer indicator went "always empty" after a restart. Screens
-  /// should now derive the active booking from this LIVE query instead of
-  /// from `AppState.lastDriverBookingId`.
   List<Booking> activeForDriver(String driverId) => _bookingsById.values
       .where((b) => b.driverId == driverId && (b.status == BookingStatus.confirmed || b.status == BookingStatus.inProgress))
       .toList()
@@ -193,10 +167,6 @@ class BookingService extends ChangeNotifier {
     }
   }
 
-  /// Bookings for a specific charger that are still "live" (would block a
-  /// new overlapping request) - used by `isRangeAvailable` below AND by
-  /// `bookedRangesFor` so the driver-facing UI can show exactly which
-  /// windows are taken instead of a generic "not available" message.
   List<Booking> _liveBookingsForCharger(String chargerId) =>
       _bookingsById.values.where((b) => b.chargerId == chargerId && ongoingStatuses.contains(b.status)).toList();
 
@@ -215,9 +185,6 @@ class BookingService extends ChangeNotifier {
     return !overlaps;
   }
 
-  /// Creates a booking request for a CUSTOM driver-chosen time range
-  /// (which may be a sub-range of a larger host-defined free window).
-  /// Persists the booking to Firestore and notifies the host.
   Future<Booking> createRequest({
     required String driverId,
     required String driverName,
@@ -238,13 +205,6 @@ class BookingService extends ChangeNotifier {
     if (!requestedEnd.isAfter(requestedStart)) {
       throw TimeRangeUnavailableException('End time must be after start time.');
     }
-    // The booking's requestedStart/End combine the HOST'S FREE-WINDOW
-    // DATE with the driver's chosen time-of-day (see
-    // BookingRequestScreen._resolveRange). Rejecting any booking whose
-    // resolved start time is already in the past prevents a driver from
-    // ever booking an already-past time (item #8 of the 7/9 update),
-    // whether that's because they picked a time earlier today, or booked
-    // against a leftover/old free window.
     final now = DateTime.now();
     if (requestedStart.isBefore(now.subtract(const Duration(minutes: 1)))) {
       throw TimeRangeUnavailableException(
@@ -376,18 +336,58 @@ class BookingService extends ChangeNotifier {
     return ok;
   }
 
+  /// FIX (9/15 update - "host can be able to stop the service as the
+  /// host doesn't have the option of that"): previously only the DRIVER
+  /// could stop a charging session (see `completeSession` calls from
+  /// screens/driver/booking_status_screen.dart) - a host had no
+  /// equivalent action anywhere in the app, even though a host is just
+  /// as likely to need to end a session (e.g. the driver already left,
+  /// or the host needs the station back). `completeSession` itself
+  /// already works identically regardless of who calls it (it doesn't
+  /// check any role), so the actual fix is exposing a host-facing call
+  /// site with clear naming for auditability/logging purposes - see the
+  /// new Stop buttons in screens/host/host_scan_screen.dart and
+  /// screens/driver/my_bookings_screen.dart's host "As Host" view.
+  Future<void> hostStopSession(String bookingId) => completeSession(bookingId);
+
+  /// FIX (9/15 update - "once the charging is done the admin should have
+  /// a request to release the payment after the calculation (kw * x) and
+  /// it should be transferred to the host wallet"): this method itself
+  /// is UNCHANGED in terms of what it computes (Booking.completeAndSettle
+  /// still calculates actualCost/overstay exactly as before) - the only
+  /// change is which WalletService method is called to actually pay out.
+  /// Previously `walletService.settleBooking(...)` credited the host
+  /// INSTANTLY with zero admin involvement. It now calls
+  /// `walletService.settleBookingWithPendingPayout(...)` instead, which
+  /// still refunds the driver's unused hold immediately (that's just
+  /// returning the driver their own money), but creates a PayoutRequest
+  /// for the host's share instead of crediting it directly - the host is
+  /// only actually paid once an admin approves it from the new Payouts
+  /// tab (see screens/admin/admin_home_screen.dart).
   Future<void> completeSession(String bookingId) async {
     final booking = findById(bookingId);
     if (booking == null) return;
     booking.completeAndSettle(DateTime.now());
-    walletService.settleBooking(
+
+    await walletService.settleBookingWithPendingPayout(
+      bookingId: booking.id,
       driverId: booking.driverId,
       hostId: booking.hostId,
-      bookingId: booking.id,
+      chargerName: booking.chargerName,
       actualCost: booking.actualCost ?? 0,
+      powerKw: booking.powerKw,
+      pricePerUnit: booking.price,
+      pricingModelName: booking.pricingModel.name,
+      actualDurationSeconds: booking.actualDuration?.inSeconds ?? 0,
     );
+
     final penalty = booking.overstayPenalty ?? 0;
     if (penalty > 0) {
+      // Overstay compensation is a penalty mechanism, not the primary
+      // "kw * price" charging payment - it remains an immediate,
+      // automatic transfer (unchanged from before), since it's
+      // compensating the host for blocked station time, not billing the
+      // driver for energy/time actually delivered.
       walletService.chargeOverstayPenalty(
         driverId: booking.driverId,
         hostId: booking.hostId,
