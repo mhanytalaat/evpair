@@ -10,6 +10,7 @@ import '../models/app_notification.dart';
 import 'wallet_service.dart';
 import 'pricing_service.dart';
 import 'notification_service.dart';
+import 'commission_service.dart';
 
 /// Common base for errors that can occur when a driver tries to request a
 /// booking, so the UI can catch a single type and read `.message`.
@@ -44,12 +45,23 @@ const int kMinBookingMinutes = 30;
 /// booking created by a driver is immediately visible to the host on a
 /// different device, and vice versa.
 class BookingService extends ChangeNotifier {
-  BookingService({required this.walletService, required this.notificationService, FirebaseFirestore? firestore})
-      : _db = firestore ?? FirebaseFirestore.instance;
+  BookingService({
+    required this.walletService,
+    required this.notificationService,
+    required this.commissionService,
+    FirebaseFirestore? firestore,
+  }) : _db = firestore ?? FirebaseFirestore.instance;
 
   final _uuid = const Uuid();
   final WalletService walletService;
   final NotificationService notificationService;
+
+  /// NEW (9/24 update - "percentage to be taken to the app 7%, let us
+  /// make on firebase, i will make it free of charge for now"): used by
+  /// completeSession() below to read the LIVE, Firestore-configurable
+  /// commission rate instead of a hardcoded 10% default. See
+  /// services/commission_service.dart.
+  final CommissionService commissionService;
   final FirebaseFirestore _db;
 
   final Map<String, Booking> _bookingsById = {};
@@ -290,6 +302,12 @@ class BookingService extends ChangeNotifier {
     );
   }
 
+  /// FIX (9/24 update, item #1 - "cancel a booked slot (driver can
+  /// cancel a booked slot)"): this method itself already existed and
+  /// already worked correctly (releases the wallet hold and marks the
+  /// booking cancelled) - the actual gap was that NO screen in the app
+  /// ever called it. See booking_status_screen_patch.txt for the new
+  /// "Cancel Booking" button that now calls this.
   Future<void> driverCancel(String bookingId) async {
     final booking = findById(bookingId);
     if (booking == null || !ongoingStatuses.contains(booking.status)) return;
@@ -336,34 +354,16 @@ class BookingService extends ChangeNotifier {
     return ok;
   }
 
-  /// FIX (9/15 update - "host can be able to stop the service as the
-  /// host doesn't have the option of that"): previously only the DRIVER
-  /// could stop a charging session (see `completeSession` calls from
-  /// screens/driver/booking_status_screen.dart) - a host had no
-  /// equivalent action anywhere in the app, even though a host is just
-  /// as likely to need to end a session (e.g. the driver already left,
-  /// or the host needs the station back). `completeSession` itself
-  /// already works identically regardless of who calls it (it doesn't
-  /// check any role), so the actual fix is exposing a host-facing call
-  /// site with clear naming for auditability/logging purposes - see the
-  /// new Stop buttons in screens/host/host_scan_screen.dart and
-  /// screens/driver/my_bookings_screen.dart's host "As Host" view.
   Future<void> hostStopSession(String bookingId) => completeSession(bookingId);
 
-  /// FIX (9/15 update - "once the charging is done the admin should have
-  /// a request to release the payment after the calculation (kw * x) and
-  /// it should be transferred to the host wallet"): this method itself
-  /// is UNCHANGED in terms of what it computes (Booking.completeAndSettle
-  /// still calculates actualCost/overstay exactly as before) - the only
-  /// change is which WalletService method is called to actually pay out.
-  /// Previously `walletService.settleBooking(...)` credited the host
-  /// INSTANTLY with zero admin involvement. It now calls
-  /// `walletService.settleBookingWithPendingPayout(...)` instead, which
-  /// still refunds the driver's unused hold immediately (that's just
-  /// returning the driver their own money), but creates a PayoutRequest
-  /// for the host's share instead of crediting it directly - the host is
-  /// only actually paid once an admin approves it from the new Payouts
-  /// tab (see screens/admin/admin_home_screen.dart).
+  /// FIX (9/24 update, item #5 - "percentage to be taken to the app
+  /// 7%... let us make on firebase"): now passes
+  /// `commissionRate: commissionService.rate` explicitly to
+  /// settleBookingWithPendingPayout, instead of relying on that
+  /// method's hardcoded 10% default. The live rate is read from
+  /// Firestore via CommissionService - see services/commission_service.dart
+  /// for how to change it (including setting it to 0 for free/no
+  /// commission).
   Future<void> completeSession(String bookingId) async {
     final booking = findById(bookingId);
     if (booking == null) return;
@@ -379,13 +379,14 @@ class BookingService extends ChangeNotifier {
       pricePerUnit: booking.price,
       pricingModelName: booking.pricingModel.name,
       actualDurationSeconds: booking.actualDuration?.inSeconds ?? 0,
+      commissionRate: commissionService.rate,
     );
 
     final penalty = booking.overstayPenalty ?? 0;
     if (penalty > 0) {
       // Overstay compensation is a penalty mechanism, not the primary
       // "kw * price" charging payment - it remains an immediate,
-      // automatic transfer (unchanged from before), since it's
+      // automatic transfer with its own separate share rate, since it's
       // compensating the host for blocked station time, not billing the
       // driver for energy/time actually delivered.
       walletService.chargeOverstayPenalty(

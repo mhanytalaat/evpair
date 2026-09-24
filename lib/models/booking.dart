@@ -144,9 +144,16 @@ class Booking {
     return true;
   }
 
+  /// FIX (9/24 update - "driver can start closer to his time around 30
+  /// mins ahead or later"): the earliest-allowed start window was
+  /// previously hardcoded to 15 minutes before the reserved start time -
+  /// changed to 30 minutes as requested. There was never any upper-bound
+  /// restriction on starting LATE (only this early-side check exists),
+  /// so starting later than the reserved time already worked with no
+  /// change needed there.
   bool startSession(DateTime now) {
     if (status != BookingStatus.confirmed) return false;
-    final earliestStart = requestedStart.subtract(const Duration(minutes: 15));
+    final earliestStart = requestedStart.subtract(const Duration(minutes: 30));
     if (now.isBefore(earliestStart)) return false;
     sessionStartedAt = now;
     status = BookingStatus.inProgress;
@@ -165,6 +172,7 @@ class Booking {
     );
     final cappedCost = rawCost > heldAmount ? heldAmount : (rawCost < 0 ? 0.0 : rawCost);
     actualCost = cappedCost;
+
     // Overstay penalty: if the session is stopped more than the grace
     // period after the originally booked end time, charge a flat
     // per-minute penalty. This is separate from actualCost/heldAmount
@@ -178,6 +186,7 @@ class Booking {
       overstayMinutes = 0;
       overstayPenalty = 0;
     }
+
     status = BookingStatus.completed;
     return heldAmount - cappedCost;
   }

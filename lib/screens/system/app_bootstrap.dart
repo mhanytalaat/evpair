@@ -19,6 +19,7 @@ import '../root/app_root.dart';
 import 'splash_screen.dart';
 import 'offline_screen.dart';
 import '../../theme/ps_ev_theme.dart';
+import '../../services/commission_service.dart';
 
 /// EVPair's app-wide theme, applied consistently across every boot phase.
 final ThemeData _appTheme = buildPsEvTheme();
@@ -94,7 +95,7 @@ class _AppBootstrapState extends State<AppBootstrap> {
   BookingService? _bookingService;
   PartnerService? _partnerService;
   RatingService? _ratingService;
-
+  CommissionService? _commissionService;
   @override
   void initState() {
     super.initState();
@@ -138,7 +139,13 @@ class _AppBootstrapState extends State<AppBootstrap> {
       _locationsService = LocationsService();
       _powerOptionsService = PowerOptionsService();
       _carModelsService = CarModelsService();
-      _bookingService = BookingService(walletService: _walletService!, notificationService: _notificationService!);
+      _bookingService = BookingService(
+        walletService: _walletService!,
+        notificationService: _notificationService!,
+        commissionService: _commissionService!,
+      );
+
+
       _partnerService = PartnerService(walletService: _walletService!);
       _ratingService = RatingService();
 
@@ -153,6 +160,7 @@ class _AppBootstrapState extends State<AppBootstrap> {
       await _withTimeout(_powerOptionsService!.hydrate(), label: 'Power options');
       await _withTimeout(_carModelsService!.hydrate(), label: 'Car models');
       await _withTimeout(_appState!.hydrateFromFirestore(), label: 'Stations');
+      await _withTimeout(_commissionService!.hydrate(), label: 'Commission rate');
 
       if (_authService!.uid != null) {
         setState(() => _statusText = 'Loading your account...');
@@ -217,6 +225,7 @@ class _AppBootstrapState extends State<AppBootstrap> {
           ChangeNotifierProvider<AuthService>.value(value: _authService!),
           ChangeNotifierProvider<PartnerService>.value(value: _partnerService!),
           ChangeNotifierProvider<RatingService>.value(value: _ratingService!),
+          ChangeNotifierProvider<CommissionService>.value(value: _commissionService!),
           ChangeNotifierProvider<LocationsService>.value(value: _locationsService!),
           ChangeNotifierProvider<PowerOptionsService>.value(value: _powerOptionsService!),
           ChangeNotifierProvider<CarModelsService>.value(value: _carModelsService!),

@@ -66,6 +66,13 @@ class WalletService extends ChangeNotifier {
 
   List<TopUpRequest> get pendingTopUps =>
       _topUpRequestsById.values.where((t) => t.status == TopUpStatus.pendingProofReview).toList();
+      
+/// NEW (9/24 update): returns this driver's own top-up REQUESTS
+  /// (pending/approved/rejected), most recent first - used by the new
+  /// "My Top-Up Requests" section in wallet_screen.dart.
+  List<TopUpRequest> topUpsForDriver(String driverId) =>
+      _topUpRequestsById.values.where((t) => t.driverId == driverId).toList()
+        ..sort((a, b) => b.requestedAt.compareTo(a.requestedAt));
 
   List<WalletLedgerEntry> ledgerFor(String userId) =>
       _ledger.where((e) => e.userId == userId).toList()

@@ -72,6 +72,32 @@ class _BookingStatusScreenState extends State<BookingStatusScreen> {
       );
     }
   }
+Future<void> _confirmAndCancel(BuildContext context, BookingService bookingService, dynamic booking) async {
+    final isFundsHeld = booking.walletHeld;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Cancel this booking?'),
+        content: Text(
+          isFundsHeld
+              ? 'Your held funds (${booking.heldAmount.toStringAsFixed(0)} EGP) will be refunded to your wallet immediately.'
+              : 'Are you sure you want to cancel this booking request?',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Keep Booking')),
+          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Cancel Booking')),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    await bookingService.driverCancel(booking.id);
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Booking cancelled.'), backgroundColor: PsEvColors.emerald),
+      );
+    }
+  }
+
 
   Future<bool> _confirmStopIfOverstaying(BuildContext context, dynamic booking) async {
     final lateBy = DateTime.now().difference(booking.requestedEnd).inMinutes;
@@ -238,6 +264,22 @@ class _BookingStatusScreenState extends State<BookingStatusScreen> {
                       ),
                     ),
                   ],
+
+                  if (booking.status == BookingStatus.pendingWalletHold ||
+                      booking.status == BookingStatus.pendingHostApproval ||
+                      booking.status == BookingStatus.confirmed) ...[
+                    const SizedBox(height: 14),
+                    SizedBox(
+                      width: 220,
+                      child: OutlinedButton.icon(
+                        onPressed: () => _confirmAndCancel(context, bookingService, booking),
+                        icon: const Icon(Icons.cancel_outlined, color: PsEvColors.red, size: 18),
+                        label: const Text('Cancel Booking', style: TextStyle(color: PsEvColors.red)),
+                        style: OutlinedButton.styleFrom(side: const BorderSide(color: PsEvColors.red)),
+                      ),
+                    ),
+                  ],
+
                   if (booking.status == BookingStatus.confirmed) ...[
                     const SizedBox(height: 14),
                     _reservedWindowCard(booking),
