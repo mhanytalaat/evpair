@@ -139,6 +139,7 @@ class _AppBootstrapState extends State<AppBootstrap> {
       _locationsService = LocationsService();
       _powerOptionsService = PowerOptionsService();
       _carModelsService = CarModelsService();
+      _commissionService = CommissionService();
       _bookingService = BookingService(
         walletService: _walletService!,
         notificationService: _notificationService!,
